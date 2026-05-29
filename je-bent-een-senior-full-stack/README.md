@@ -45,7 +45,7 @@ Koppel nog geen productiedomein. Gebruik eerst alleen de tijdelijke Vercel test-
 - Zoekfunctie en kofferfilter
 - Automatische berekening van resterend, aan te vullen en materiaalkosten
 - Project afronden
-- Kantoor-dashboard voor projecten, bestellingen en kosten
+- Admin-dashboard voor projecten, bestellingen en kosten
 - Bestelstatusflow: Niet besteld, Besteld, Ontvangen, Aangevuld
 - Artikelbeheer met prijzen, artikelnummers, artikelnummers en actief/inactief
 - CSV-export
