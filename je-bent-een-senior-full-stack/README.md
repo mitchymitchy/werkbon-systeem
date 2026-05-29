@@ -1,14 +1,41 @@
-# Montagekoffer App
+# Alff Werkbon Systeem
 
-Nederlandstalige mobile-first MVP voor montagekoffers bij ketelinstallaties.
+Nederlandstalige mobile-first MVP voor werkbonnen, CO-keur, montagekoffers en bestellingen bij ketelinstallaties.
 
-## Starten
+## Lokaal draaien
 
-Open `index.html` direct in de browser, of start een simpele lokale server:
+```bash
+npm install
+npm run dev
+```
+
+Open daarna `http://localhost:4173`.
+
+Zonder npm kan de lokale server ook direct worden gestart:
 
 ```bash
 node server.js
 ```
+
+## Build
+
+```bash
+npm run build
+```
+
+De static build komt in `dist/`. Vercel gebruikt dezelfde build via `vercel.json`.
+
+## Vercel deploy
+
+Bij import van de GitHub repository `mitchymitchy/werkbon-systeem`:
+
+- Root Directory: `je-bent-een-senior-full-stack`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Production Branch: `main`
+- Auto deploy: aan
+
+Koppel nog geen productiedomein. Gebruik eerst alleen de tijdelijke Vercel test-URL.
 
 ## Inbegrepen
 

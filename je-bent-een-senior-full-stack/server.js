@@ -11,10 +11,11 @@ const types = {
 };
 
 const server = http.createServer((req, res) => {
-  const urlPath = req.url === "/" ? "/index.html" : req.url.split("?")[0];
-  const filePath = path.join(root, urlPath);
+  const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+  const urlPath = pathname === "/" ? "/index.html" : pathname;
+  const filePath = path.resolve(root, `.${urlPath}`);
 
-  if (!filePath.startsWith(root)) {
+  if (filePath !== root && !filePath.startsWith(root + path.sep)) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -22,8 +23,15 @@ const server = http.createServer((req, res) => {
 
   fs.readFile(filePath, (error, data) => {
     if (error) {
-      res.writeHead(404);
-      res.end("Not found");
+      fs.readFile(path.join(root, "index.html"), (fallbackError, fallbackData) => {
+        if (fallbackError) {
+          res.writeHead(404);
+          res.end("Not found");
+          return;
+        }
+        res.writeHead(200, { "Content-Type": types[".html"] });
+        res.end(fallbackData);
+      });
       return;
     }
 
