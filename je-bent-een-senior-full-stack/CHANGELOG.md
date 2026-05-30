@@ -29,5 +29,6 @@
 - Opstartcontrole voor verplichte Supabase-tabellen (`users`, `companies`, `appliances`, `permissions`) toont nu een korte melding zoals `Database migratie vereist: appliances` in plaats van technische 404/foutdetails.
 - Monteurs met `Werkbonnen aanmaken` recht kunnen nu vanuit Start een nieuwe CV-onderhoudswerkbon maken met klant, adres, toestelregistratie, onderhoudschecklist en Supabase-opslag via `workorders`/`appliances`.
 - Werkbon aanmaken vereenvoudigd naar een korte `+ Nieuwe werkbon` flow voor Monteur en Company Admin met klantkeuze, type werkbon, planning, optionele toestelgegevens, concept/open acties en Supabase-opslag.
+- Monteur Start toont nu een aparte tegel `Werkbon aanmaken`, los van `Werkbonnen`, gestuurd door het Supabase-permission veld `workorders_create`.
 - Company Admin en Platform Admin kunnen nu per monteur de zichtbare dashboardknoppen beheren; deze dashboardrechten worden via de bestaande Supabase `permissions` flow opgeslagen.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.

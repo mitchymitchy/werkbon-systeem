@@ -89,6 +89,7 @@ const USER_PERMISSION_FIELDS = [
   "can_edit_customers",
   "can_view_workorders",
   "can_open_workorders",
+  "workorders_create",
   "can_create_workorders",
   "can_edit_workorders",
   "can_delete_workorders",
@@ -167,10 +168,10 @@ const MONTEUR_DASHBOARD_ITEMS = [
   {
     key: "maintenance-workorder",
     route: "maintenance-workorder",
-    title: "+ Nieuwe werkbon",
-    description: "Maak onderweg snel een werkbon aan.",
+    title: "Werkbon aanmaken",
+    description: "Maak snel een nieuwe onderhouds-, storing- of reparatiewerkbon.",
     icon: "+",
-    permission: "can_create_workorders",
+    permission: "workorders_create",
   },
   {
     key: "active-projects",
@@ -1253,7 +1254,8 @@ function normalizeState(input) {
     normalizedUser.can_edit_customers = Boolean(user.can_edit_customers);
     normalizedUser.can_view_workorders = user.can_view_workorders ?? (role === ROLES.COMPANY_ADMIN || role === ROLES.MECHANIC);
     normalizedUser.can_open_workorders = user.can_open_workorders ?? (role === ROLES.COMPANY_ADMIN || role === ROLES.MECHANIC);
-    normalizedUser.can_create_workorders = user.can_create_workorders ?? (role === ROLES.COMPANY_ADMIN);
+    normalizedUser.can_create_workorders = user.can_create_workorders ?? user.workorders_create ?? (role === ROLES.COMPANY_ADMIN);
+    normalizedUser.workorders_create = user.workorders_create ?? normalizedUser.can_create_workorders;
     normalizedUser.can_edit_workorders = user.can_edit_workorders ?? (role === ROLES.COMPANY_ADMIN);
     normalizedUser.can_delete_workorders = user.can_delete_workorders ?? (role === ROLES.COMPANY_ADMIN);
     normalizedUser.can_close_workorders = user.can_close_workorders !== false;
@@ -18341,6 +18343,8 @@ const USER_PERMISSION_GROUPS = [
 ];
 
 const USER_PERMISSION_ALIASES = {
+  workorders_create: "can_create_workorders",
+  can_create_workorders: "workorders_create",
   can_create_quotes: "can_make_quotes",
   can_make_quotes: "can_create_quotes",
   can_reply_emails: "can_reply_email",
