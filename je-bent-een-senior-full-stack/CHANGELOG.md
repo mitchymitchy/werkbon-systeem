@@ -26,4 +26,5 @@
 - Monteur dashboard gelijkgetrokken tussen desktop en mobiel: Planning, Werkbonnen, Lopende projecten, Afgeronde projecten, Toestellendatabase, Busvoorraad, Klanten en Meldingen staan nu als expliciete kaarten in dezelfde Start-render.
 - Monteur dashboard gecentraliseerd via `MONTEUR_DASHBOARD_ITEMS`; desktop en mobiel gebruiken dezelfde bron en oude dubbele actieve dashboarddefinities zijn geneutraliseerd.
 - Supabase tabelcontrole verbeterd: ontbrekende entity-tabellen worden nu gebundeld gerapporteerd in plaats van te stoppen op de eerste 404 zoals `users`; `app_state_snapshots` is toegevoegd aan het bootstrap-schema.
+- Monteurs met `Werkbonnen aanmaken` recht kunnen nu vanuit Start een nieuwe CV-onderhoudswerkbon maken met klant, adres, toestelregistratie, onderhoudschecklist en Supabase-opslag via `workorders`/`appliances`.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.

@@ -68,7 +68,8 @@ const SUPABASE_ENTITY_TABLES = [
   { table: "companies", collection: "companies", companyScoped: false, prune: false },
   { table: "users", collection: "users", companyScoped: false, prune: false },
   { table: "customers", collection: "customers", companyScoped: true, prune: false },
-  { table: "workorders", collection: "workorders", companyScoped: true, prune: false },
+  { table: "workorders", collection: "projects", companyScoped: true, prune: false },
+  { table: "appliances", collection: "appliances", companyScoped: true, prune: false },
   { table: "quotes", collection: "quotes", companyScoped: true, prune: false },
   { table: "invoices", collection: "invoices", companyScoped: true, prune: false },
   { table: "company_settings", collection: "companySettings", virtual: true, companyScoped: true, prune: false },
@@ -78,7 +79,7 @@ const SUPABASE_ENTITY_TABLES = [
   { table: "menu_layout", collection: "companyMenuLayout", virtual: true, companyScoped: true, prune: false },
   { table: "notification_settings", collection: "notificationSettings", virtual: true, companyScoped: true, prune: false },
 ];
-const SUPABASE_PRIMARY_COLLECTIONS = ["companies", "users", "customers", "workorders", "quotes", "invoices"];
+const SUPABASE_PRIMARY_COLLECTIONS = ["companies", "users", "customers", "projects", "appliances", "quotes", "invoices"];
 const USER_PERMISSION_FIELDS = [
   "can_create_customer_from_call",
   "can_create_own_appointments",
@@ -161,6 +162,14 @@ const MONTEUR_DASHBOARD_ITEMS = [
     title: "Werkbonnen",
     description: "Open toegewezen werkbonnen of maak een nieuwe werkbon.",
     icon: "W",
+  },
+  {
+    key: "maintenance-workorder",
+    route: "maintenance-workorder",
+    title: "Nieuwe onderhoudswerkbon",
+    description: "Maak onderweg een CV-onderhoudswerkbon aan.",
+    icon: "CV",
+    permission: "can_create_workorders",
   },
   {
     key: "active-projects",
@@ -11124,6 +11133,7 @@ function pageTitle(route) {
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
   if (route.startsWith("whatsapp")) return ["WhatsApp", "Klantberichten lezen en beantwoorden."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
+  if (route.startsWith("maintenance-workorder")) return ["Nieuwe onderhoudswerkbon", "Maak onderweg een CV-onderhoudswerkbon aan."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
   if (route.startsWith("new")) return ["Nieuw project", "Maak direct een registratie aan."];
   if (route.startsWith("active")) return ["Lopende projecten", "Open projecten die nog ingevuld worden."];
@@ -12465,6 +12475,348 @@ function legacyRenderRoute3(route) {
   if (name === "admin" || name === "office") return renderOffice(id);
   if (name === "manage") return renderManage();
   return renderHome();
+}
+
+function maintenanceWorkorderTypes() {
+  return ["Onderhoud CV-toestel", "Storing", "Reparatie", "Installatie", "Inspectie"];
+}
+
+function maintenanceChecklistItems() {
+  return [
+    ["visual_check", "Visuele controle"],
+    ["burner_check", "Brander controleren"],
+    ["heat_exchanger_check", "Warmtewisselaar controleren"],
+    ["flue_check", "Rookgasafvoer controleren"],
+    ["condensate_check", "Condensafvoer controleren"],
+    ["water_pressure_check", "Waterdruk controleren"],
+    ["co_measurement", "CO-meting uitvoeren"],
+    ["efficiency_measurement", "Rendement/rookgasmeting invullen"],
+    ["safety_check", "Veiligheidscontrole uitgevoerd"],
+  ];
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Bestand lezen mislukt."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderMaintenanceWorkorderForm() {
+  if (!hasWorkorderPermission("can_create_workorders")) return `<div class="panel empty">Je hebt geen rechten om werkbonnen aan te maken.</div>`;
+  ensurePricingCategories();
+  const today = new Date().toISOString().slice(0, 10);
+  const customers = activeCustomers();
+  return `<form class="panel" onsubmit="createMaintenanceWorkorder(event)">
+    <div class="article-head">
+      <div>
+        <h2>Nieuwe onderhoudswerkbon</h2>
+        <p>Maak onderweg een CV-onderhoudswerkbon aan en koppel deze direct aan klant, adres, monteur en toestel.</p>
+      </div>
+      <span class="badge ok">Monteur</span>
+    </div>
+    <h3>Klant kiezen of aanmaken</h3>
+    <div class="form-grid">
+      <label>Bestaande klant zoeken
+        <select name="customer_id" onchange="fillMaintenanceWorkorderCustomer(this.value)">
+          <option value="">Nieuwe klant toevoegen</option>
+          ${customers.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.customer_name || "-")} - ${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.city || "")}</option>`).join("")}
+        </select>
+      </label>
+      <label>Klantnaam <input id="maintenance-customer-name" name="customer_name" required /></label>
+      <label>Telefoon <input id="maintenance-phone" name="phone" /></label>
+      <label>E-mail <input id="maintenance-email" name="email" type="email" /></label>
+      <label>Postcode <input id="maintenance-postal-code" name="postal_code" required onblur="autoFillMaintenanceAddress()" /></label>
+      <label>Huisnummer <input id="maintenance-house-number" name="house_number" required onblur="autoFillMaintenanceAddress()" /></label>
+      <label>Adres <input id="maintenance-address" name="address" /></label>
+      <label>Plaats <input id="maintenance-city" name="city" /></label>
+      <input type="hidden" id="maintenance-lat" name="lat" />
+      <input type="hidden" id="maintenance-lng" name="lng" />
+      <input type="hidden" id="maintenance-geocode-provider" name="geocode_provider" />
+    </div>
+    <h3>Type werkbon</h3>
+    <div class="form-grid">
+      <label>Type werkbon <select name="workorder_type">${maintenanceWorkorderTypes().map((type, index) => `<option value="${type}" ${index === 0 ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+      <label>Categorie <select name="pricing_category_id" required>${pricingCategoryOptions()}</select></label>
+      <label>Datum <input name="date" type="date" required value="${escapeAttr(today)}" /></label>
+      <label>Omschrijving <input name="description" value="Onderhoud CV-toestel" /></label>
+    </div>
+    <h3>CV-toestel gegevens</h3>
+    <div class="form-grid">
+      <label>Merk toestel * <input name="appliance_brand" required placeholder="Bijv. Remeha" /></label>
+      <label>Type toestel <input name="appliance_model" placeholder="Bijv. Avanta 35C" /></label>
+      <label>Serienummer <input name="serial_number" /></label>
+      <label>Bouwjaar <input name="build_year" type="number" min="1950" max="2100" /></label>
+      <label>Foto typeplaatje <input name="typeplate_photo" type="file" accept="image/*" /></label>
+      <label>Laatste onderhoudsdatum <input name="last_service_date" type="date" /></label>
+      <label>Volgende onderhoudsdatum <input name="next_service_date" type="date" /></label>
+    </div>
+    <h3>Onderhoud checklist</h3>
+    <div class="settings-grid">
+      ${maintenanceChecklistItems().map(([key, label]) => `<label class="check-line"><input name="check_${key}" type="checkbox" /> ${escapeHtml(label)}</label>`).join("")}
+    </div>
+    <h3>Afronden</h3>
+    <div class="form-grid">
+      <label class="full">Opmerkingen <textarea name="notes" placeholder="Opmerkingen voor deze onderhoudswerkbon"></textarea></label>
+    </div>
+    <div class="button-row">
+      <button class="btn success" type="submit">Werkbon opslaan</button>
+      <a class="btn secondary" href="#/start">Annuleren</a>
+    </div>
+  </form>`;
+}
+
+function fillMaintenanceWorkorderCustomer(customerId) {
+  const customer = byId(state.customers || [], customerId);
+  if (!customer) return;
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value || "";
+  };
+  set("maintenance-customer-name", customer.customer_name);
+  set("maintenance-phone", customer.phone);
+  set("maintenance-email", customer.email);
+  set("maintenance-postal-code", customer.postal_code);
+  set("maintenance-house-number", customer.house_number);
+  set("maintenance-address", customer.address);
+  set("maintenance-city", customer.city);
+}
+
+function autoFillMaintenanceAddress() {
+  const postalCode = String(document.getElementById("maintenance-postal-code")?.value || "").replace(/\s+/g, "").toUpperCase();
+  const houseNumber = String(document.getElementById("maintenance-house-number")?.value || "").trim();
+  if (!postalCode || !houseNumber) return;
+  const match = activeCustomers().find((customer) =>
+    String(customer.postal_code || "").replace(/\s+/g, "").toUpperCase() === postalCode &&
+    String(customer.house_number || "").trim() === houseNumber
+  );
+  if (match) {
+    fillMaintenanceWorkorderCustomer(match.id);
+    return;
+  }
+  const query = `${postalCode} ${houseNumber}, Nederland`;
+  const set = (id, value, onlyEmpty = true) => {
+    const el = document.getElementById(id);
+    if (el && (!onlyEmpty || !el.value)) el.value = value || "";
+  };
+  if (window.google?.maps?.Geocoder) {
+    const geocoder = new window.google.maps.Geocoder();
+    geocoder.geocode({ address: query }, (results, status) => {
+      if (status !== "OK" || !results?.[0]) return;
+      const result = results[0];
+      const component = (type) => result.address_components?.find((item) => item.types.includes(type))?.long_name || "";
+      set("maintenance-address", component("route"));
+      set("maintenance-city", component("locality") || component("postal_town") || component("administrative_area_level_2"));
+      set("maintenance-lat", result.geometry?.location?.lat?.(), false);
+      set("maintenance-lng", result.geometry?.location?.lng?.(), false);
+      set("maintenance-geocode-provider", "google_geocoding_api", false);
+    });
+    return;
+  }
+  set("maintenance-city", postcodeCityGuess(postalCode));
+  const geo = approximateGeoFromAddress(postalCode, houseNumber);
+  set("maintenance-lat", geo.lat, false);
+  set("maintenance-lng", geo.lng, false);
+  set("maintenance-geocode-provider", geo.precision, false);
+}
+
+async function createMaintenanceWorkorder(event) {
+  event.preventDefault();
+  if (!hasWorkorderPermission("can_create_workorders")) return alert("Je hebt geen rechten om werkbonnen aan te maken.");
+  ensureGarageBoxArticles();
+  ensurePricingCategories();
+  state.customers = state.customers || [];
+  state.projects = state.projects || [];
+  state.appliances = state.appliances || [];
+  const form = new FormData(event.target);
+  const now = new Date().toISOString();
+  const companyId = currentCompanyId();
+  const mechanic = currentUser();
+  const customerName = String(form.get("customer_name") || "").trim();
+  const postalCode = String(form.get("postal_code") || "").trim();
+  const houseNumber = String(form.get("house_number") || "").trim();
+  const address = String(form.get("address") || "").trim();
+  const city = String(form.get("city") || "").trim();
+  let customer = byId(state.customers, String(form.get("customer_id") || ""));
+  if (!customer) {
+    customer = {
+      id: uid("customer"),
+      company_id: companyId,
+      companyId: companyId,
+      customer_name: customerName,
+      contact_person: customerName,
+      phone: String(form.get("phone") || "").trim(),
+      email: String(form.get("email") || "").trim(),
+      address,
+      house_number: houseNumber,
+      postal_code: postalCode,
+      city,
+      lat: Number(form.get("lat") || 0) || null,
+      lng: Number(form.get("lng") || 0) || null,
+      geocode_provider: String(form.get("geocode_provider") || "").trim(),
+      map_location_saved: Boolean(form.get("lat") && form.get("lng")),
+      notes: "Aangemaakt door monteur vanuit onderhoudswerkbon",
+      source: "mechanic_workorder",
+      created_by: mechanic?.id || "",
+      active: true,
+      created_at: now,
+      updated_at: now,
+    };
+    state.customers.push(customer);
+  } else {
+    customer.phone = customer.phone || String(form.get("phone") || "").trim();
+    customer.email = customer.email || String(form.get("email") || "").trim();
+    customer.address = customer.address || address;
+    customer.house_number = customer.house_number || houseNumber;
+    customer.postal_code = customer.postal_code || postalCode;
+    customer.city = customer.city || city;
+    customer.lat = customer.lat || (Number(form.get("lat") || 0) || null);
+    customer.lng = customer.lng || (Number(form.get("lng") || 0) || null);
+    customer.geocode_provider = customer.geocode_provider || String(form.get("geocode_provider") || "").trim();
+    customer.map_location_saved = Boolean(customer.lat && customer.lng);
+    customer.updated_at = now;
+  }
+  const typeplateFile = event.target.elements.typeplate_photo?.files?.[0] || null;
+  const typeplateDataUrl = await readFileAsDataUrl(typeplateFile);
+  const workorderType = String(form.get("workorder_type") || "Onderhoud CV-toestel");
+  const title = `${workorderType} - ${customer.customer_name}`;
+  const project = {
+    id: uid("project"),
+    company_id: companyId,
+    companyId: companyId,
+    projectName: title,
+    project_name: title,
+    workorder_number: nextWorkorderNumber(),
+    workorder_type: workorderType,
+    customer_id: customer.id,
+    customerId: customer.id,
+    customer: customer.customer_name,
+    customer_name: customer.customer_name,
+    address: `${customer.address || address} ${customer.house_number || houseNumber}, ${customer.postal_code || postalCode} ${customer.city || city}`.trim(),
+    postal_code: customer.postal_code || postalCode,
+    city: customer.city || city,
+    phone: customer.phone || String(form.get("phone") || "").trim(),
+    technician: mechanic?.name || "",
+    mechanicId: mechanic?.id || "",
+    assignedMechanicId: mechanic?.id || "",
+    assigned_mechanic_id: mechanic?.id || "",
+    createdBy: mechanic?.id || "",
+    created_by: mechanic?.id || "",
+    date: String(form.get("date") || new Date().toISOString().slice(0, 10)),
+    selectedKitIds: ["M001"],
+    selectedSourceIds: ["M001"],
+    sourceChoiceLabel: "Onderhoud CV-toestel",
+    status: "in uitvoering",
+    description: String(form.get("description") || workorderType).trim(),
+    createdAt: now,
+    created_at: now,
+    updated_at: now,
+  };
+  applyPricingSnapshot(project, form.get("pricing_category_id"));
+  const workOrder = ensureWorkOrder(project);
+  workOrder.id = workOrder.id || project.id;
+  workOrder.workorder_id = project.id;
+  workOrder.workorderType = workorderType;
+  workOrder.gasApplianceWork = "ja";
+  workOrder.materialsUsed = "nee";
+  workOrder.solution = String(form.get("description") || workorderType).trim();
+  workOrder.notes = String(form.get("notes") || "").trim();
+  workOrder.appliance = {
+    brand: String(form.get("appliance_brand") || "").trim(),
+    model: String(form.get("appliance_model") || "").trim(),
+    serial_number: String(form.get("serial_number") || "").trim(),
+    build_year: String(form.get("build_year") || "").trim(),
+    category: "CV-ketel",
+    last_service_date: String(form.get("last_service_date") || "").trim(),
+    next_service_date: String(form.get("next_service_date") || "").trim(),
+  };
+  workOrder.checklistAnswers = workOrder.checklistAnswers || {};
+  maintenanceChecklistItems().forEach(([key, label]) => {
+    workOrder.checklistAnswers[key] = form.get(`check_${key}`) ? "ja" : "nee";
+    workOrder.checklistAnswers[`${key}_label`] = label;
+  });
+  if (typeplateDataUrl) {
+    workOrder.photos = workOrder.photos || [];
+    workOrder.photos.push({
+      id: uid("photo"),
+      company_id: companyId,
+      companyId: companyId,
+      workorder_id: project.id,
+      category: "typeplaatje",
+      type: "typeplaatje",
+      file_name: typeplateFile.name,
+      name: typeplateFile.name,
+      data_url: typeplateDataUrl,
+      dataUrl: typeplateDataUrl,
+      uploaded_by: mechanic?.id || "",
+      uploaded_at: now,
+      createdAt: now,
+    });
+  }
+  const appliance = {
+    id: uid("appliance"),
+    company_id: companyId,
+    companyId: companyId,
+    customer_id: customer.id,
+    project_id: project.id,
+    workorder_id: project.id,
+    mechanic_id: mechanic?.id || "",
+    mechanic_name: mechanic?.name || "",
+    address: customer.address || address,
+    house_number: customer.house_number || houseNumber,
+    postal_code: customer.postal_code || postalCode,
+    city: customer.city || city,
+    brand: workOrder.appliance.brand,
+    model: workOrder.appliance.model,
+    serial_number: workOrder.appliance.serial_number,
+    build_year: workOrder.appliance.build_year,
+    category: "CV-ketel",
+    last_service_date: workOrder.appliance.last_service_date,
+    service_date: project.date,
+    next_service_date: workOrder.appliance.next_service_date,
+    typeplate_photo: typeplateDataUrl ? { file_name: typeplateFile.name, data_url: typeplateDataUrl, uploaded_at: now } : null,
+    active: true,
+    service_history: [{
+      service_date: project.date,
+      workorder_id: project.id,
+      workorder_number: project.workorder_number,
+      mechanic_id: mechanic?.id || "",
+      mechanic_name: mechanic?.name || "",
+      work_type: workorderType,
+      notes: workOrder.notes,
+    }],
+    created_at: now,
+    updated_at: now,
+  };
+  state.projects.push(project);
+  state.appliances.push(appliance);
+  state.usages.push(...state.articles
+    .filter((article) => article.active && isSameCompany(article) && project.selectedKitIds.includes(article.kitId))
+    .map((article) => ({
+      id: uid("usage"),
+      company_id: companyId,
+      companyId: companyId,
+      projectId: project.id,
+      articleId: article.id,
+      kitId: article.kitId,
+      sourceType: "kit",
+      sourceName: article.kitId,
+      usedQuantity: 0,
+      purchasePriceAtTime: null,
+      totalPrice: 0,
+      replenishQuantity: 0,
+      orderStatus: "Niet besteld",
+    })));
+  saveState();
+  if (centralDatabaseEnabled()) {
+    const saved = await persistStateToCentralDatabase();
+    if (!saved) return alert("Werkbon is lokaal in de sessie aangemaakt, maar opslaan naar Supabase is mislukt. Controleer de Supabase tabellen.");
+  }
+  location.hash = `#/project/${project.id}`;
+  render();
 }
 
 function renderNewProject() {
@@ -16854,7 +17206,7 @@ function renderRoute(route) {
     if (moduleKey && !isCompanyModuleActive(moduleKey)) return moduleInactiveMessage();
     return renderOffice(id);
   }
-  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment", "whatsapp", "busvoorraad", "customers", "appliances"];
+  const mechanicRoutes = ["start", "new", "maintenance-workorder", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment", "whatsapp", "busvoorraad", "customers", "appliances"];
   if (!mechanicRoutes.includes(name)) return defaultRouteForUser() === "#/admin" ? renderOffice() : renderHome();
   if (!isMechanic()) return renderNoOfficeAccess();
   if (name === "notifications") return renderNotificationsCenter();
@@ -16867,6 +17219,10 @@ function renderRoute(route) {
   if (name === "payment") return renderMechanicPayment(id);
   if (name === "start" && id === "planning") return isCompanyModuleActive("planning") ? renderMechanicAgendaPage(sub || "week") : moduleInactiveMessage();
   if (name === "start") return renderHome();
+  if (name === "maintenance-workorder") {
+    if (!isCompanyModuleActive("workorders")) return moduleInactiveMessage();
+    return renderMaintenanceWorkorderForm();
+  }
   if (name === "new") {
     if (!isCompanyModuleActive("workorders")) return moduleInactiveMessage();
     if (!hasWorkorderPermission("can_create_workorders")) return `<div class="panel empty">Je hebt geen rechten om werkbonnen aan te maken.</div>`;
@@ -20952,6 +21308,7 @@ function pageTitle(route) {
   if (route.startsWith("appliances")) return ["Toestellendatabase", "Toestellen gekoppeld aan jouw werkbonnen."];
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
+  if (route.startsWith("maintenance-workorder")) return ["Nieuwe onderhoudswerkbon", "Maak onderweg een CV-onderhoudswerkbon aan."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
   if (route.startsWith("new")) return ["Nieuw project", "Maak direct een registratie aan."];
   if (route.startsWith("active")) return ["Lopende projecten", "Open projecten die nog ingevuld worden."];
@@ -20982,6 +21339,7 @@ function mechanicDashboardItems() {
 }
 
 function renderMechanicDashboardTile(item) {
+  if (item.permission && !hasWorkorderPermission(item.permission)) return "";
   const route = typeof item.route === "function" ? item.route() : item.route;
   return homeTile(route, item.title, item.description, item.icon);
 }

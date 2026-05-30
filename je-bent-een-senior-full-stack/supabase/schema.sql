@@ -55,6 +55,7 @@ select public.create_werkbonsysteem_entity_table('companies');
 select public.create_werkbonsysteem_entity_table('users');
 select public.create_werkbonsysteem_entity_table('customers');
 select public.create_werkbonsysteem_entity_table('workorders');
+select public.create_werkbonsysteem_entity_table('appliances');
 select public.create_werkbonsysteem_entity_table('quotes');
 select public.create_werkbonsysteem_entity_table('invoices');
 select public.create_werkbonsysteem_entity_table('company_settings');
