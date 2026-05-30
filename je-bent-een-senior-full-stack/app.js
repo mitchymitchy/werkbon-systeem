@@ -167,9 +167,9 @@ const MONTEUR_DASHBOARD_ITEMS = [
   {
     key: "maintenance-workorder",
     route: "maintenance-workorder",
-    title: "Werkbon aanmaken",
-    description: "Maak onderweg een nieuwe onderhoudswerkbon aan.",
-    icon: "CV",
+    title: "+ Nieuwe werkbon",
+    description: "Maak onderweg snel een werkbon aan.",
+    icon: "+",
     permission: "can_create_workorders",
   },
   {
@@ -3263,8 +3263,10 @@ function updateOrderLineStatus(lineId, status, timestamp = new Date().toISOStrin
 
 function renderOfficeProjects() {
   const projects = visibleProjects();
-  if (!projects.length) return `<div class="panel empty">Nog geen projecten.</div>`;
+  const header = `<section class="office-page-head"><div><h2>Werkbonnen</h2><p>Maak, plan en beheer werkbonnen voor monteurs.</p></div>${hasWorkorderPermission("can_create_workorders") ? `<a class="btn success" href="#/admin/new-workorder">+ Nieuwe werkbon</a>` : ""}</section>`;
+  if (!projects.length) return `${header}<div class="panel empty">Nog geen werkbonnen.</div>`;
   return `
+    ${header}
     <div class="table-wrap">
       <table>
         <thead><tr><th>Project</th><th>Klant</th><th>Monteur</th><th>Status</th><th>Gebruikt</th><th>Kosten</th><th>Actie</th></tr></thead>
@@ -11157,9 +11159,8 @@ function pageTitle(route) {
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
   if (route.startsWith("whatsapp")) return ["WhatsApp", "Klantberichten lezen en beantwoorden."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
-  if (route.startsWith("maintenance-workorder")) return ["Nieuwe onderhoudswerkbon", "Maak onderweg een CV-onderhoudswerkbon aan."];
+  if (route.startsWith("maintenance-workorder") || route.startsWith("new") || route.startsWith("admin/new-workorder")) return ["Nieuwe werkbon", "Maak binnen 1 minuut een werkbon aan."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
-  if (route.startsWith("new")) return ["Nieuw project", "Maak direct een registratie aan."];
   if (route.startsWith("active")) return ["Lopende projecten", "Open projecten die nog ingevuld worden."];
   if (route.startsWith("completed")) return ["Afgeronde projecten", "Projectregistraties en aanvullingen."];
   if (route.startsWith("project")) return ["Monteurscherm", "Snel onderdelen registreren."];
@@ -12502,7 +12503,7 @@ function legacyRenderRoute3(route) {
 }
 
 function maintenanceWorkorderTypes() {
-  return ["Onderhoud CV-toestel", "Storing", "Reparatie", "Installatie", "Inspectie"];
+  return ["Onderhoud CV-toestel", "Storing", "Reparatie", "Installatie", "Inspectie", "Anders"];
 }
 
 function maintenanceChecklistItems() {
@@ -12534,15 +12535,18 @@ function renderMaintenanceWorkorderForm() {
   ensurePricingCategories();
   const today = new Date().toISOString().slice(0, 10);
   const customers = activeCustomers();
+  const mechanics = state.users.filter((user) => userRole(user) === ROLES.MECHANIC && user.active !== false && !user.deleted && isSameCompany(user));
+  const current = currentUser();
+  const defaultMechanicId = isMechanic() ? current?.id || "" : mechanics[0]?.id || "";
   return `<form class="panel" onsubmit="createMaintenanceWorkorder(event)">
     <div class="article-head">
       <div>
-        <h2>Nieuwe onderhoudswerkbon</h2>
-        <p>Maak onderweg een CV-onderhoudswerkbon aan en koppel deze direct aan klant, adres, monteur en toestel.</p>
+        <h2>+ Nieuwe werkbon</h2>
+        <p>Korte flow: klant, type, planning en alleen toestelgegevens wanneer nodig.</p>
       </div>
-      <span class="badge ok">Monteur</span>
+      <span class="badge ok">${isOfficeAdmin() ? "Company Admin" : "Monteur"}</span>
     </div>
-    <h3>Klant kiezen of aanmaken</h3>
+    <h3>Stap 1: Klant</h3>
     <div class="form-grid">
       <label>Bestaande klant zoeken
         <select name="customer_id" onchange="fillMaintenanceWorkorderCustomer(this.value)">
@@ -12561,36 +12565,54 @@ function renderMaintenanceWorkorderForm() {
       <input type="hidden" id="maintenance-lng" name="lng" />
       <input type="hidden" id="maintenance-geocode-provider" name="geocode_provider" />
     </div>
-    <h3>Type werkbon</h3>
+    <h3>Stap 2: Type werkbon</h3>
     <div class="form-grid">
-      <label>Type werkbon <select name="workorder_type">${maintenanceWorkorderTypes().map((type, index) => `<option value="${type}" ${index === 0 ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+      <label>Type werkbon <select name="workorder_type" onchange="toggleSimpleWorkorderAppliance(this.value)">${maintenanceWorkorderTypes().map((type, index) => `<option value="${type}" ${index === 0 ? "selected" : ""}>${type}</option>`).join("")}</select></label>
       <label>Categorie <select name="pricing_category_id" required>${pricingCategoryOptions()}</select></label>
-      <label>Datum <input name="date" type="date" required value="${escapeAttr(today)}" /></label>
       <label>Omschrijving <input name="description" value="Onderhoud CV-toestel" /></label>
     </div>
-    <h3>CV-toestel gegevens</h3>
+    <h3>Stap 3: Planning</h3>
     <div class="form-grid">
-      <label>Merk toestel * <input name="appliance_brand" required placeholder="Bijv. Remeha" /></label>
+      <label>Monteur
+        ${isOfficeAdmin()
+          ? `<select name="mechanic_id" required>${mechanics.map((user) => `<option value="${user.id}" ${user.id === defaultMechanicId ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.email || "")}</option>`).join("")}</select>`
+          : `<input value="${escapeAttr(current?.name || "")}" readonly /><input type="hidden" name="mechanic_id" value="${escapeAttr(defaultMechanicId)}" />`}
+      </label>
+      <label>Datum <input name="date" type="date" required value="${escapeAttr(today)}" /></label>
+      <label>Starttijd <input name="start_time" type="time" value="09:00" /></label>
+      <label>Eindtijd <input name="end_time" type="time" value="10:00" /></label>
+      <label>Prioriteit <select name="priority"><option value="normaal">normaal</option><option value="hoog">hoog</option><option value="spoed">spoed</option></select></label>
+    </div>
+    <section id="simple-workorder-appliance-section">
+      <h3>Stap 4: Toestelgegevens</h3>
+      <p class="muted">Alleen merk is verplicht. Type, serienummer, bouwjaar en foto kunnen later worden aangevuld.</p>
+      <div class="form-grid">
+      <label>Merk toestel * <input id="simple-appliance-brand" name="appliance_brand" required placeholder="Bijv. Remeha" /></label>
       <label>Type toestel <input name="appliance_model" placeholder="Bijv. Avanta 35C" /></label>
       <label>Serienummer <input name="serial_number" /></label>
       <label>Bouwjaar <input name="build_year" type="number" min="1950" max="2100" /></label>
       <label>Foto typeplaatje <input name="typeplate_photo" type="file" accept="image/*" /></label>
-      <label>Laatste onderhoudsdatum <input name="last_service_date" type="date" /></label>
-      <label>Volgende onderhoudsdatum <input name="next_service_date" type="date" /></label>
-    </div>
-    <h3>Onderhoud checklist</h3>
-    <div class="settings-grid">
-      ${maintenanceChecklistItems().map(([key, label]) => `<label class="check-line"><input name="check_${key}" type="checkbox" /> ${escapeHtml(label)}</label>`).join("")}
-    </div>
-    <h3>Afronden</h3>
+      </div>
+    </section>
+    <h3>Stap 5: Opslaan</h3>
     <div class="form-grid">
-      <label class="full">Opmerkingen <textarea name="notes" placeholder="Opmerkingen voor deze onderhoudswerkbon"></textarea></label>
+      <label class="full">Notitie <textarea name="notes" placeholder="Korte omschrijving of afspraaknotitie"></textarea></label>
     </div>
     <div class="button-row">
-      <button class="btn success" type="submit">Werkbon opslaan</button>
-      <a class="btn secondary" href="#/start">Annuleren</a>
+      <button class="btn secondary" type="submit" name="save_action" value="concept">Concept opslaan</button>
+      <button class="btn success" type="submit" name="save_action" value="create">Werkbon aanmaken</button>
+      <button class="btn success" type="submit" name="save_action" value="open">Werkbon aanmaken en openen</button>
+      <a class="btn secondary" href="${isOfficeAdmin() ? "#/admin/workorders" : "#/start"}">Annuleren</a>
     </div>
   </form>`;
+}
+
+function toggleSimpleWorkorderAppliance(type) {
+  const section = document.getElementById("simple-workorder-appliance-section");
+  const brand = document.getElementById("simple-appliance-brand");
+  const relevant = type !== "Anders";
+  if (section) section.style.display = relevant ? "" : "none";
+  if (brand) brand.required = relevant;
 }
 
 function fillMaintenanceWorkorderCustomer(customerId) {
@@ -12658,12 +12680,16 @@ async function createMaintenanceWorkorder(event) {
   const form = new FormData(event.target);
   const now = new Date().toISOString();
   const companyId = currentCompanyId();
-  const mechanic = currentUser();
+  const actor = currentUser();
+  const assignedMechanicId = isOfficeAdmin() ? String(form.get("mechanic_id") || "") : actor?.id || "";
+  const mechanic = byId(state.users || [], assignedMechanicId) || actor;
+  const saveAction = event.submitter?.value || "create";
   const customerName = String(form.get("customer_name") || "").trim();
   const postalCode = String(form.get("postal_code") || "").trim();
   const houseNumber = String(form.get("house_number") || "").trim();
   const address = String(form.get("address") || "").trim();
   const city = String(form.get("city") || "").trim();
+  if (!assignedMechanicId) return alert("Kies een monteur.");
   let customer = byId(state.customers, String(form.get("customer_id") || ""));
   if (!customer) {
     customer = {
@@ -12682,9 +12708,9 @@ async function createMaintenanceWorkorder(event) {
       lng: Number(form.get("lng") || 0) || null,
       geocode_provider: String(form.get("geocode_provider") || "").trim(),
       map_location_saved: Boolean(form.get("lat") && form.get("lng")),
-      notes: "Aangemaakt door monteur vanuit onderhoudswerkbon",
-      source: "mechanic_workorder",
-      created_by: mechanic?.id || "",
+      notes: isMechanic() ? "Aangemaakt door monteur vanuit werkbon" : "Aangemaakt door kantoor vanuit werkbon",
+      source: isMechanic() ? "mechanic_workorder" : "admin_workorder",
+      created_by: actor?.id || "",
       active: true,
       created_at: now,
       updated_at: now,
@@ -12706,7 +12732,15 @@ async function createMaintenanceWorkorder(event) {
   const typeplateFile = event.target.elements.typeplate_photo?.files?.[0] || null;
   const typeplateDataUrl = await readFileAsDataUrl(typeplateFile);
   const workorderType = String(form.get("workorder_type") || "Onderhoud CV-toestel");
+  const applianceRelevant = workorderType !== "Anders";
+  const applianceBrand = String(form.get("appliance_brand") || "").trim();
+  if (applianceRelevant && !applianceBrand) return alert("Merk toestel is verplicht.");
   const title = `${workorderType} - ${customer.customer_name}`;
+  const startTime = String(form.get("start_time") || "").trim();
+  const endTime = String(form.get("end_time") || "").trim();
+  const date = String(form.get("date") || new Date().toISOString().slice(0, 10));
+  const startDateTime = startTime ? `${date}T${startTime}` : "";
+  const endDateTime = endTime ? `${date}T${endTime}` : "";
   const project = {
     id: uid("project"),
     company_id: companyId,
@@ -12724,16 +12758,16 @@ async function createMaintenanceWorkorder(event) {
     city: customer.city || city,
     phone: customer.phone || String(form.get("phone") || "").trim(),
     technician: mechanic?.name || "",
-    mechanicId: mechanic?.id || "",
-    assignedMechanicId: mechanic?.id || "",
-    assigned_mechanic_id: mechanic?.id || "",
-    createdBy: mechanic?.id || "",
-    created_by: mechanic?.id || "",
-    date: String(form.get("date") || new Date().toISOString().slice(0, 10)),
+    mechanicId: assignedMechanicId,
+    assignedMechanicId: assignedMechanicId,
+    assigned_mechanic_id: assignedMechanicId,
+    createdBy: actor?.id || "",
+    created_by: actor?.id || "",
+    date,
     selectedKitIds: ["M001"],
     selectedSourceIds: ["M001"],
-    sourceChoiceLabel: "Onderhoud CV-toestel",
-    status: "in uitvoering",
+    sourceChoiceLabel: workorderType,
+    status: saveAction === "concept" ? "concept" : startDateTime ? "ingepland" : isOfficeAdmin() ? "toegewezen" : "in uitvoering",
     description: String(form.get("description") || workorderType).trim(),
     createdAt: now,
     created_at: now,
@@ -12744,18 +12778,16 @@ async function createMaintenanceWorkorder(event) {
   workOrder.id = workOrder.id || project.id;
   workOrder.workorder_id = project.id;
   workOrder.workorderType = workorderType;
-  workOrder.gasApplianceWork = "ja";
+  workOrder.gasApplianceWork = applianceRelevant && applianceBrand ? "ja" : "nee";
   workOrder.materialsUsed = "nee";
   workOrder.solution = String(form.get("description") || workorderType).trim();
   workOrder.notes = String(form.get("notes") || "").trim();
   workOrder.appliance = {
-    brand: String(form.get("appliance_brand") || "").trim(),
+    brand: applianceBrand,
     model: String(form.get("appliance_model") || "").trim(),
     serial_number: String(form.get("serial_number") || "").trim(),
     build_year: String(form.get("build_year") || "").trim(),
-    category: "CV-ketel",
-    last_service_date: String(form.get("last_service_date") || "").trim(),
-    next_service_date: String(form.get("next_service_date") || "").trim(),
+    category: workorderType === "Onderhoud CV-toestel" ? "CV-ketel" : "",
   };
   workOrder.checklistAnswers = workOrder.checklistAnswers || {};
   maintenanceChecklistItems().forEach(([key, label]) => {
@@ -12780,43 +12812,87 @@ async function createMaintenanceWorkorder(event) {
       createdAt: now,
     });
   }
-  const appliance = {
-    id: uid("appliance"),
+  state.projects.push(project);
+  if (applianceBrand) {
+    state.appliances.push({
+      id: uid("appliance"),
+      company_id: companyId,
+      companyId: companyId,
+      customer_id: customer.id,
+      project_id: project.id,
+      workorder_id: project.id,
+      mechanic_id: assignedMechanicId,
+      mechanic_name: mechanic?.name || "",
+      address: customer.address || address,
+      house_number: customer.house_number || houseNumber,
+      postal_code: customer.postal_code || postalCode,
+      city: customer.city || city,
+      brand: workOrder.appliance.brand,
+      model: workOrder.appliance.model,
+      serial_number: workOrder.appliance.serial_number,
+      build_year: workOrder.appliance.build_year,
+      category: workOrder.appliance.category || "Toestel",
+      service_date: project.date,
+      typeplate_photo: typeplateDataUrl ? { file_name: typeplateFile.name, data_url: typeplateDataUrl, uploaded_at: now } : null,
+      active: true,
+      service_history: [{
+        service_date: project.date,
+        workorder_id: project.id,
+        workorder_number: project.workorder_number,
+        mechanic_id: assignedMechanicId,
+        mechanic_name: mechanic?.name || "",
+        work_type: workorderType,
+        notes: workOrder.notes,
+      }],
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  let planningEvent = null;
+  if (startDateTime && endDateTime) {
+    planningEvent = {
+      id: uid("plan"),
+      company_id: companyId,
+      companyId: companyId,
+      customer_id: customer.id,
+      workorder_id: project.id,
+      project_id: project.id,
+      mechanic_id: assignedMechanicId,
+      title: workorderNumber(project),
+      description: String(form.get("description") || workorderType).trim(),
+      customer_name: customer.customer_name,
+      address: customer.address || address,
+      postal_code: customer.postal_code || postalCode,
+      city: customer.city || city,
+      phone: customer.phone || String(form.get("phone") || "").trim(),
+      start_datetime: startDateTime,
+      end_datetime: endDateTime,
+      status: saveAction === "concept" ? "concept" : "ingepland",
+      priority: String(form.get("priority") || "normaal"),
+      notes: String(form.get("notes") || "").trim(),
+      source: isMechanic() ? "mechanic" : "admin",
+      approval_status: isMechanic() ? "concept" : "goedgekeurd",
+      created_by: actor?.id || "",
+      created_by_role: userRole(actor),
+      updated_at: now,
+    };
+    state.planningEvents = state.planningEvents || [];
+    state.planningEvents.push(planningEvent);
+  }
+  state.auditLogs = state.auditLogs || [];
+  state.auditLogs.push({
+    id: uid("audit"),
     company_id: companyId,
     companyId: companyId,
-    customer_id: customer.id,
-    project_id: project.id,
-    workorder_id: project.id,
-    mechanic_id: mechanic?.id || "",
-    mechanic_name: mechanic?.name || "",
-    address: customer.address || address,
-    house_number: customer.house_number || houseNumber,
-    postal_code: customer.postal_code || postalCode,
-    city: customer.city || city,
-    brand: workOrder.appliance.brand,
-    model: workOrder.appliance.model,
-    serial_number: workOrder.appliance.serial_number,
-    build_year: workOrder.appliance.build_year,
-    category: "CV-ketel",
-    last_service_date: workOrder.appliance.last_service_date,
-    service_date: project.date,
-    next_service_date: workOrder.appliance.next_service_date,
-    typeplate_photo: typeplateDataUrl ? { file_name: typeplateFile.name, data_url: typeplateDataUrl, uploaded_at: now } : null,
-    active: true,
-    service_history: [{
-      service_date: project.date,
-      workorder_id: project.id,
-      workorder_number: project.workorder_number,
-      mechanic_id: mechanic?.id || "",
-      mechanic_name: mechanic?.name || "",
-      work_type: workorderType,
-      notes: workOrder.notes,
-    }],
+    user_id: actor?.id || "",
+    user_name: actor?.name || "",
+    role: userRole(actor),
+    action: "werkbon aangemaakt",
+    entity_type: "workorder",
+    entity_id: project.id,
+    details: `${workorderNumber(project)} - ${customer.customer_name}`,
     created_at: now,
-    updated_at: now,
-  };
-  state.projects.push(project);
-  state.appliances.push(appliance);
+  });
   state.usages.push(...state.articles
     .filter((article) => article.active && isSameCompany(article) && project.selectedKitIds.includes(article.kitId))
     .map((article) => ({
@@ -12834,62 +12910,18 @@ async function createMaintenanceWorkorder(event) {
       replenishQuantity: 0,
       orderStatus: "Niet besteld",
     })));
+  if (planningEvent && isOfficeAdmin()) notifyWorkorderAssigned(project, planningEvent);
   saveState();
   if (centralDatabaseEnabled()) {
     const saved = await persistStateToCentralDatabase();
     if (!saved) return alert("Werkbon is lokaal in de sessie aangemaakt, maar opslaan naar Supabase is mislukt. Controleer de Supabase tabellen.");
   }
-  location.hash = `#/project/${project.id}`;
+  location.hash = saveAction === "open" ? `#/project/${project.id}` : isOfficeAdmin() ? "#/admin/workorders" : "#/active";
   render();
 }
 
 function renderNewProject() {
-  ensurePricingCategories();
-  const today = new Date().toISOString().slice(0, 10);
-  const mechanicName = currentUser()?.name || "";
-  const mechanics = state.users.filter((user) => user.role === "mechanic" && user.active && isSameCompany(user));
-  const choices = [
-    ["ALL_WITH_GARAGE", "Beide koffers + Garage Box"],
-    ["M001", "Alleen M001"],
-    ["M004", "Alleen M004"],
-    ["M001_M004", "M001 + M004"],
-    ["GARAGE_ONLY", "Alleen Garage Box"],
-    ["M001_GARAGE", "M001 + Garage Box"],
-    ["M004_GARAGE", "M004 + Garage Box"],
-  ];
-  return `
-    <form class="panel" onsubmit="createProject(event)">
-      <div class="form-grid">
-        <label>Projectnaam <input name="projectName" required placeholder="Bijv. Ketel vervangen Janssen" /></label>
-        <label>Klant <input name="customer" required placeholder="Naam klant" /></label>
-        <label>Adres <input name="address" required placeholder="Straat, plaats" /></label>
-        <label>Postcode <input name="postal_code" /></label>
-        <label>Plaats <input name="city" /></label>
-        <label>Telefoon <input name="phone" /></label>
-        <label>Categorie <select name="pricing_category_id" required>${pricingCategoryOptions()}</select></label>
-        ${
-          isOfficeAdmin()
-            ? `<label>Toewijzen aan monteur
-                <select name="assignedMechanicId" required>
-                  ${mechanics.map((user) => `<option value="${user.id}">${escapeHtml(user.name)} - ${escapeHtml(user.email)}</option>`).join("")}
-                </select>
-              </label>`
-            : `<label>Monteur <input name="technician" required value="${escapeAttr(mechanicName)}" placeholder="Naam monteur" /></label>`
-        }
-        <label>Datum <input name="date" type="date" value="${today}" required /></label>
-        <label>Koffer kiezen
-          <select name="sourceChoice" required>
-            ${choices.map(([value, label], index) => `<option value="${value}" ${index === 0 ? "selected" : ""}>${label}</option>`).join("")}
-          </select>
-        </label>
-        ${isOfficeAdmin() ? `<label>Start planning <input name="start_datetime" type="datetime-local" /></label><label>Einde planning <input name="end_datetime" type="datetime-local" /></label>` : ""}
-      </div>
-      <div class="button-row">
-        <button class="btn success" type="submit">Project aanmaken</button>
-        <a class="btn secondary" href="#/start">Annuleren</a>
-      </div>
-    </form>
-  `;
+  return renderMaintenanceWorkorderForm();
 }
 
 function createProject(event) {
@@ -13169,8 +13201,10 @@ function saveNewPlanningEvent(event) {
 
 function renderOfficeProjects() {
   const projects = visibleProjects();
-  if (!projects.length) return `<div class="panel empty">Nog geen projecten.</div>`;
+  const header = `<section class="office-page-head"><div><h2>Werkbonnen</h2><p>Maak, plan en beheer werkbonnen voor monteurs.</p></div>${hasWorkorderPermission("can_create_workorders") ? `<a class="btn success" href="#/admin/new-workorder">+ Nieuwe werkbon</a>` : ""}</section>`;
+  if (!projects.length) return `${header}<div class="panel empty">Nog geen werkbonnen.</div>`;
   return `
+    ${header}
     <div class="table-wrap">
       <table>
         <thead><tr><th>Project</th><th>Klant</th><th>Monteur</th><th>Categorie</th><th>Status</th><th>Gebruikt</th><th>Kosten</th><th>Actie</th></tr></thead>
@@ -17226,6 +17260,11 @@ function renderRoute(route) {
   if (isPlatformSuperAdmin()) return renderPlatform();
   if (name === "admin" || name === "office" || name === "manage") {
     if (!isCompanyAdmin()) return renderNoOfficeAccess();
+    if (id === "new-workorder") {
+      if (!isCompanyModuleActive("workorders")) return moduleInactiveMessage();
+      if (!hasWorkorderPermission("can_create_workorders")) return `<div class="panel empty">Je hebt geen rechten om werkbonnen aan te maken.</div>`;
+      return renderOffice(id);
+    }
     const moduleKey = moduleForOfficeSection(id);
     if (moduleKey && !isCompanyModuleActive(moduleKey)) return moduleInactiveMessage();
     return renderOffice(id);
@@ -21328,6 +21367,14 @@ function renderOffice(section = "") {
   else ui.dashboardTab = officeSectionToTab(section);
   const moduleKey = moduleForOfficeSection(section);
   if (moduleKey && !isCompanyModuleActive(moduleKey)) return `${renderSupportBanner()}${moduleInactiveMessage()}`;
+  if (section === "new-workorder") {
+    return `${renderSupportBanner()}<section class="office-erp-shell">
+      ${renderOfficeSidebar()}
+      <main class="office-content">
+        ${renderMaintenanceWorkorderForm()}
+      </main>
+    </section>`;
+  }
   return `${renderSupportBanner()}<section class="office-erp-shell">
     ${renderOfficeSidebar()}
     <main class="office-content">
@@ -21370,9 +21417,8 @@ function pageTitle(route) {
   if (route.startsWith("appliances")) return ["Toestellendatabase", "Toestellen gekoppeld aan jouw werkbonnen."];
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
-  if (route.startsWith("maintenance-workorder")) return ["Nieuwe onderhoudswerkbon", "Maak onderweg een CV-onderhoudswerkbon aan."];
+  if (route.startsWith("maintenance-workorder") || route.startsWith("new") || route.startsWith("admin/new-workorder")) return ["Nieuwe werkbon", "Maak binnen 1 minuut een werkbon aan."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
-  if (route.startsWith("new")) return ["Nieuw project", "Maak direct een registratie aan."];
   if (route.startsWith("active")) return ["Lopende projecten", "Open projecten die nog ingevuld worden."];
   if (route.startsWith("completed")) return ["Afgeronde projecten", "Projectregistraties en aanvullingen."];
   if (route.startsWith("project")) return ["Monteurscherm", "Snel onderdelen registreren."];
