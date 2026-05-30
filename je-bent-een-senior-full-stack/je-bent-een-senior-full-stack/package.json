@@ -1,0 +1,15 @@
+{
+  "name": "alff-werkbon-systeem",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone werkbon- en montagekoffer-app voor Alff Installaties.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node scripts/build.js",
+    "serve": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
