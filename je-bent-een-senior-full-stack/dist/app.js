@@ -80,6 +80,7 @@ const SUPABASE_ENTITY_TABLES = [
   { table: "notification_settings", collection: "notificationSettings", virtual: true, companyScoped: true, prune: false },
 ];
 const SUPABASE_PRIMARY_COLLECTIONS = ["companies", "users", "customers", "projects", "appliances", "quotes", "invoices"];
+const STARTUP_REQUIRED_SUPABASE_TABLES = ["users", "companies", "appliances", "permissions"];
 const USER_PERMISSION_FIELDS = [
   "can_create_customer_from_call",
   "can_create_own_appointments",
@@ -827,6 +828,13 @@ async function fetchSupabaseTableRows(tableName) {
   return response.json();
 }
 
+function databaseMigrationMessageForMissingTables(missingTables = []) {
+  const missing = [...new Set((missingTables || []).filter(Boolean))];
+  const startupMissing = STARTUP_REQUIRED_SUPABASE_TABLES.filter((table) => missing.includes(table));
+  const relevantTables = startupMissing.length ? startupMissing : missing;
+  return relevantTables.length ? `Database migratie vereist: ${relevantTables.join(", ")}` : "";
+}
+
 async function fetchSupabaseEntityRows() {
   const rowsByCollection = {};
   const missingTables = [];
@@ -844,7 +852,7 @@ async function fetchSupabaseEntityRows() {
     }
   }
   if (missingTables.length) {
-    const error = new Error(`Supabase tabellen ontbreken: ${missingTables.join(", ")}. Voer supabase/schema.sql uit in Supabase SQL Editor.`);
+    const error = new Error(databaseMigrationMessageForMissingTables(missingTables) || "Database migratie vereist.");
     error.code = "SUPABASE_TABLES_MISSING";
     error.missingTables = missingTables;
     error.rowsByCollection = rowsByCollection;
@@ -1084,7 +1092,8 @@ async function loadStateFromCentralDatabase() {
   } catch (entityError) {
     remoteLoadComplete = true;
     console.error("[WerkbonSysteem] Supabase laden mislukt; geen localStorage fallback voor bedrijfsdata", entityError);
-    state.databaseSyncError = entityError.message || "Supabase data-/instellingentabellen niet bereikbaar.";
+    const migrationMessage = entityError.code === "SUPABASE_TABLES_MISSING" ? databaseMigrationMessageForMissingTables(entityError.missingTables) : "";
+    state.databaseSyncError = migrationMessage || entityError.message || "Supabase data-/instellingentabellen niet bereikbaar.";
     state.session = null;
     saveLocalSessionOnly();
     return false;
@@ -1893,7 +1902,7 @@ async function login(event) {
   if (centralDatabaseEnabled()) {
     const loaded = await loadStateFromCentralDatabase();
     if (!loaded) {
-      document.getElementById("login-error").textContent = "Serverdata kon niet worden geladen.";
+      document.getElementById("login-error").textContent = state.databaseSyncError || "Serverdata kon niet worden geladen.";
       return;
     }
   }
@@ -1919,7 +1928,7 @@ async function login(event) {
 async function quickLogin(email) {
   if (centralDatabaseEnabled()) {
     const loaded = await loadStateFromCentralDatabase();
-    if (!loaded) return alert("Serverdata kon niet worden geladen.");
+    if (!loaded) return alert(state.databaseSyncError || "Serverdata kon niet worden geladen.");
   }
   const user = state.users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.active);
   if (!user) return;
