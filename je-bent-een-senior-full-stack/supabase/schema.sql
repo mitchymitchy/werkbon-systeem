@@ -63,6 +63,7 @@ select public.create_werkbonsysteem_entity_table('permissions');
 select public.create_werkbonsysteem_entity_table('branding');
 select public.create_werkbonsysteem_entity_table('menu_layout');
 select public.create_werkbonsysteem_entity_table('notification_settings');
+select public.create_werkbonsysteem_entity_table('app_state_snapshots');
 
 -- Productie-hardening:
 -- Vervang deze brede anon policies later door Supabase Auth + RLS op company_id.

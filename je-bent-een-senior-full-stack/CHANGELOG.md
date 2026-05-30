@@ -25,4 +25,5 @@
 - Opslaan-UX verbeterd voor serveracties: opslaanknoppen tonen tijdelijk “Opslaan...”, worden disabled tijdens Supabase-writes en tonen pas na serverbevestiging een groene succesmelding of rode foutmelding met laatste opslagtijd.
 - Monteur dashboard gelijkgetrokken tussen desktop en mobiel: Planning, Werkbonnen, Lopende projecten, Afgeronde projecten, Toestellendatabase, Busvoorraad, Klanten en Meldingen staan nu als expliciete kaarten in dezelfde Start-render.
 - Monteur dashboard gecentraliseerd via `MONTEUR_DASHBOARD_ITEMS`; desktop en mobiel gebruiken dezelfde bron en oude dubbele actieve dashboarddefinities zijn geneutraliseerd.
+- Supabase tabelcontrole verbeterd: ontbrekende entity-tabellen worden nu gebundeld gerapporteerd in plaats van te stoppen op de eerste 404 zoals `users`; `app_state_snapshots` is toegevoegd aan het bootstrap-schema.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.

@@ -793,8 +793,40 @@ async function fetchSupabaseTableRows(tableName) {
   const response = await fetch(supabaseTableUrl(tableName, "?select=id,company_id,payload,updated_at"), {
     headers: centralDatabaseHeaders({ Accept: "application/json" }),
   });
+  if (response.status === 404) {
+    const error = new Error(`Supabase tabel ontbreekt: ${tableName}`);
+    error.code = "SUPABASE_TABLE_MISSING";
+    error.tableName = tableName;
+    throw error;
+  }
   if (!response.ok) throw new Error(`Supabase tabel ${tableName} laden mislukt: ${response.status}`);
   return response.json();
+}
+
+async function fetchSupabaseEntityRows() {
+  const rowsByCollection = {};
+  const missingTables = [];
+  for (const definition of SUPABASE_ENTITY_TABLES) {
+    try {
+      const rows = await fetchSupabaseTableRows(definition.table);
+      rowsByCollection[definition.collection] = rows;
+    } catch (error) {
+      if (error.code === "SUPABASE_TABLE_MISSING") {
+        missingTables.push(definition.table);
+        rowsByCollection[definition.collection] = [];
+      } else {
+        throw error;
+      }
+    }
+  }
+  if (missingTables.length) {
+    const error = new Error(`Supabase tabellen ontbreken: ${missingTables.join(", ")}. Voer supabase/schema.sql uit in Supabase SQL Editor.`);
+    error.code = "SUPABASE_TABLES_MISSING";
+    error.missingTables = missingTables;
+    error.rowsByCollection = rowsByCollection;
+    throw error;
+  }
+  return rowsByCollection;
 }
 
 async function upsertSupabaseRows(tableName, rows) {
@@ -925,11 +957,7 @@ function mergeSupabaseEntityRows(baseState, rowsByCollection) {
 }
 
 async function loadStateFromSupabaseEntities() {
-  const rowsByCollection = {};
-  for (const definition of SUPABASE_ENTITY_TABLES) {
-    const rows = await fetchSupabaseTableRows(definition.table);
-    rowsByCollection[definition.collection] = rows;
-  }
+  const rowsByCollection = await fetchSupabaseEntityRows();
   console.info("[WerkbonSysteem] data geladen", {
     source: "Supabase",
     tables: Object.fromEntries(Object.entries(rowsByCollection).map(([collection, rows]) => [collection, rows.length])),
@@ -940,11 +968,7 @@ async function loadStateFromSupabaseEntities() {
 }
 
 async function refreshStateFromSupabaseEntities() {
-  const rowsByCollection = {};
-  for (const definition of SUPABASE_ENTITY_TABLES) {
-    const rows = await fetchSupabaseTableRows(definition.table);
-    rowsByCollection[definition.collection] = rows;
-  }
+  const rowsByCollection = await fetchSupabaseEntityRows();
   console.info("[WerkbonSysteem] data opnieuw geladen", {
     source: "Supabase",
     tables: Object.fromEntries(Object.entries(rowsByCollection).map(([collection, rows]) => [collection, rows.length])),
