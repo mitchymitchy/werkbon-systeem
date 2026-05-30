@@ -158,16 +158,16 @@ const MONTEUR_DASHBOARD_ITEMS = [
   },
   {
     key: "workorders",
-    route: () => (hasWorkorderPermission("can_create_workorders") ? "new" : "active"),
+    route: "active",
     title: "Werkbonnen",
-    description: "Open toegewezen werkbonnen of maak een nieuwe werkbon.",
+    description: "Open toegewezen werkbonnen.",
     icon: "W",
   },
   {
     key: "maintenance-workorder",
     route: "maintenance-workorder",
-    title: "Nieuwe onderhoudswerkbon",
-    description: "Maak onderweg een CV-onderhoudswerkbon aan.",
+    title: "Werkbon aanmaken",
+    description: "Maak onderweg een nieuwe onderhoudswerkbon aan.",
     icon: "CV",
     permission: "can_create_workorders",
   },
@@ -213,6 +213,21 @@ const MONTEUR_DASHBOARD_ITEMS = [
     description: "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen.",
     icon: "M",
   },
+];
+
+const MONTEUR_DASHBOARD_BUTTON_PERMISSIONS = [
+  ["dashboard_planning", "planning", "Planning"],
+  ["dashboard_workorders", "workorders", "Werkbonnen"],
+  ["dashboard_active_projects", "active-projects", "Lopende projecten"],
+  ["dashboard_completed_projects", "completed-projects", "Afgeronde projecten"],
+  ["dashboard_appliances", "appliances", "Toestellendatabase"],
+  ["dashboard_customers", "customers", "Klanten"],
+  ["dashboard_van_stock", "van-stock", "Busvoorraad"],
+  ["dashboard_notifications", "notifications", "Meldingen"],
+  ["dashboard_call_customer", "call-customer", "Nieuwe klant uit telefoongesprek"],
+  ["dashboard_whatsapp", "whatsapp", "WhatsApp"],
+  ["dashboard_create_workorder", "maintenance-workorder", "Werkbon aanmaken"],
+  ["dashboard_create_customer", "create-customer", "Klant aanmaken"],
 ];
 
 const seedCompanies = [
@@ -690,7 +705,7 @@ function extractUserRights(user) {
     ...Object.values(USER_PERMISSION_ALIASES || {}),
   ].filter((field, index, arr) => field && arr.indexOf(field) === index);
   fields.forEach((field) => {
-    permissions[field] = Boolean(user?.[field]);
+    permissions[field] = isDashboardPermissionField(field) ? user?.[field] !== false : Boolean(user?.[field]);
   });
   return {
     id: user?.id || user?.email || uid("rights"),
@@ -4175,8 +4190,8 @@ async function saveUserRow() {
     setServerSaveSuccess("Wijzigingen succesvol opgeslagen");
   } catch (error) {
     console.error("Rechten opslaan mislukt", error);
-    state.databaseSyncError = error.message || "Wijzigingen konden niet worden opgeslagen op de server.";
-    setServerSaveError("Wijzigingen konden niet worden opgeslagen op de server.");
+    state.databaseSyncError = error.message || "Dashboardrechten konden niet worden opgeslagen.";
+    setServerSaveError("Dashboardrechten konden niet worden opgeslagen.");
   }
 }
 
@@ -18289,10 +18304,28 @@ const USER_PERMISSION_ALIASES = {
 };
 
 function allUserPermissionFields() {
-  return USER_PERMISSION_GROUPS.flatMap(([, fields]) => fields.map(([field]) => field));
+  return [
+    ...USER_PERMISSION_GROUPS.flatMap(([, fields]) => fields.map(([field]) => field)),
+    ...MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.map(([field]) => field),
+  ];
+}
+
+function isDashboardPermissionField(field) {
+  return MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.some(([permissionField]) => permissionField === field);
+}
+
+function dashboardPermissionFieldForKey(key) {
+  return MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.find(([, itemKey]) => itemKey === key)?.[0] || "";
+}
+
+function dashboardButtonEnabled(user, key) {
+  if (!user || userRole(user) !== ROLES.MECHANIC) return true;
+  const field = dashboardPermissionFieldForKey(key);
+  return field ? user[field] !== false : true;
 }
 
 function permissionValue(user, field) {
+  if (isDashboardPermissionField(field)) return user?.[field] !== false;
   if (String(field || "").includes("_workorders") && userRole(user) === ROLES.COMPANY_ADMIN) return user?.[field] !== false;
   const alias = USER_PERMISSION_ALIASES[field];
   if (field === "can_close_workorders") return user?.[field] !== false;
@@ -18363,12 +18396,31 @@ function renderPermissionGroups(user, onChangeFactory) {
   </section>`).join("")}</div>`;
 }
 
+function renderMechanicDashboardPermissionGroup(user, onChangeFactory) {
+  if (userRole(user) !== ROLES.MECHANIC) return "";
+  return `<section class="user-permission-section">
+    <h4>Monteur dashboard knoppen</h4>
+    <div class="user-permission-grid">
+      ${MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.map(([field, , label]) => `<label class="permission-row"><span>${escapeHtml(label)}</span>${renderYesNoSelect(user, field, onChangeFactory(field))}</label>`).join("")}
+    </div>
+  </section>`;
+}
+
 function renderNewUserPermissionInputs() {
-  const defaults = { can_view_workorders: true, can_open_workorders: true, can_close_workorders: true };
+  const defaults = {
+    can_view_workorders: true,
+    can_open_workorders: true,
+    can_close_workorders: true,
+    ...Object.fromEntries(MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.map(([field]) => [field, true])),
+  };
   return `<div class="user-permission-groups full">${USER_PERMISSION_GROUPS.map(([title, fields]) => `<section class="user-permission-section">
     <h4>${escapeHtml(title)}</h4>
     <div class="user-permission-grid">${fields.map(([field, label]) => `<label class="permission-row"><span>${escapeHtml(label)}</span><select name="${field}"><option value="false" ${!defaults[field] ? "selected" : ""}>Nee</option><option value="true" ${defaults[field] ? "selected" : ""}>Ja</option></select></label>`).join("")}</div>
-  </section>`).join("")}</div>`;
+  </section>`).join("")}
+  <section class="user-permission-section">
+    <h4>Monteur dashboard knoppen</h4>
+    <div class="user-permission-grid">${MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.map(([field, , label]) => `<label class="permission-row"><span>${escapeHtml(label)}</span><select name="${field}"><option value="false">Nee</option><option value="true" selected>Ja</option></select></label>`).join("")}</div>
+  </section></div>`;
 }
 
 function roleOptionsForUserManagement() {
@@ -18511,6 +18563,7 @@ function renderUserCard(user) {
         </div>
       </section>
       ${renderPermissionGroups(user, (field) => `updateUser('${user.id}', '${field}', this.value === 'true')`)}
+      ${renderMechanicDashboardPermissionGroup(user, (field) => `updateUser('${user.id}', '${field}', this.value === 'true')`)}
     </div>` : ""}
   </article>`;
 }
@@ -21335,7 +21388,8 @@ function renderHome() {
 }
 
 function mechanicDashboardItems() {
-  return MONTEUR_DASHBOARD_ITEMS;
+  const user = currentUser();
+  return MONTEUR_DASHBOARD_ITEMS.filter((item) => dashboardButtonEnabled(user, item.key));
 }
 
 function renderMechanicDashboardTile(item) {
@@ -21349,9 +21403,11 @@ function renderMechanicHomeWithMenuOrder(weekCount, canCreateCallCustomer) {
   const definitions = mechanicDashboardItems();
   const favoriteTiles = definitions.filter((item) => favorites.includes(item.title)).map(renderMechanicDashboardTile).join("");
   const regularTiles = definitions.filter((item) => !favorites.includes(item.title)).map(renderMechanicDashboardTile).join("");
+  const user = currentUser();
   const extraTiles = [
-    canCreateCallCustomer ? homeTile("call-customer", "Nieuwe klant uit telefoongesprek", "Maak snel klant, notitie of afspraak.", "Tel") : "",
-    canUseWhatsApp() ? homeTile("whatsapp", "WhatsApp", "Lees en beantwoord klantberichten.", "W") : "",
+    canCreateCallCustomer && dashboardButtonEnabled(user, "call-customer") ? homeTile("call-customer", "Nieuwe klant uit telefoongesprek", "Maak snel klant, notitie of afspraak.", "Tel") : "",
+    hasMechanicPermission("can_create_customers") && dashboardButtonEnabled(user, "create-customer") ? homeTile("customers", "Klant aanmaken", "Maak of beheer klanten die aan jouw werk zijn gekoppeld.", "K+") : "",
+    canUseWhatsApp() && dashboardButtonEnabled(user, "whatsapp") ? homeTile("whatsapp", "WhatsApp", "Lees en beantwoord klantberichten.", "W") : "",
   ].join("");
   return `<section class="grid home-grid">
     <section class="stats full"><div class="stat-card"><span>Planning deze week</span><strong>${weekCount}</strong></div></section>
