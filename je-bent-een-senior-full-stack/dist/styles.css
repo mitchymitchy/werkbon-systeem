@@ -47,6 +47,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -2078,6 +2083,102 @@ body:has(.platform-panel) .bottom-nav {
 
 .notification-popup.notification-urgent {
   box-shadow: 0 24px 70px rgba(239, 68, 68, 0.34);
+}
+
+.save-toast,
+.last-saved-indicator {
+  position: fixed;
+  right: 24px;
+  top: 24px;
+  z-index: 120;
+  display: grid;
+  gap: 4px;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid rgba(184, 193, 204, 0.2);
+  border-radius: 12px;
+  color: var(--ink);
+  background: rgba(8, 23, 46, 0.96);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+  animation: saveToastFade 3.6s ease both;
+}
+
+.save-toast strong {
+  font-size: 15px;
+}
+
+.save-toast span,
+.last-saved-indicator {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.save-toast-success {
+  border-color: rgba(34, 197, 94, 0.56);
+  box-shadow: 0 22px 60px rgba(34, 197, 94, 0.18);
+}
+
+.save-toast-success strong::before {
+  content: "✅ ";
+  color: #22c55e;
+}
+
+.save-toast-error {
+  border-color: rgba(239, 68, 68, 0.62);
+  box-shadow: 0 22px 60px rgba(239, 68, 68, 0.2);
+  animation-duration: 5s;
+}
+
+.save-toast-error strong::before {
+  content: "❌ ";
+  color: #ef4444;
+}
+
+.save-toast-pending {
+  border-color: rgba(214, 167, 60, 0.5);
+  animation: saveToastIn 180ms ease both;
+}
+
+.save-toast-pending strong::before {
+  content: "💾 ";
+}
+
+.last-saved-indicator {
+  top: auto;
+  bottom: 88px;
+  min-width: 0;
+  padding: 9px 12px;
+  opacity: 0.82;
+  animation: saveToastIn 180ms ease both;
+}
+
+@keyframes saveToastFade {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  10%,
+  82% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes saveToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .notification-list {

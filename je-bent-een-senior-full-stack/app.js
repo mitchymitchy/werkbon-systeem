@@ -1,4 +1,16 @@
 const STORAGE_KEY = "werkbonsysteem-saas-v14";
+const SESSION_STORAGE_KEY = `${STORAGE_KEY}:session`;
+const UI_STORAGE_KEY = `${STORAGE_KEY}:ui`;
+const DATABASE_CONFIG_STORAGE_KEY = `${STORAGE_KEY}:database-config`;
+const CENTRAL_DATABASE_CONFIG = {
+  provider: "supabase",
+  supabaseUrl: "",
+  anonKey: "",
+  schema: "public",
+  snapshotTable: "app_state_snapshots",
+  snapshotId: "production",
+  ...(window.WERKBON_DATABASE_CONFIG || {}),
+};
 
 const ORDER_STATUSES = ["Niet besteld", "Besteld", "Ontvangen", "Aangevuld"];
 const DEFAULT_COMPANY_ID = "company-alff-installaties";
@@ -52,6 +64,47 @@ const PRODUCTION_ENTITY_COLLECTIONS = [
   "settings",
   "reports",
 ];
+const SUPABASE_ENTITY_TABLES = [
+  { table: "companies", collection: "companies", companyScoped: false, prune: false },
+  { table: "users", collection: "users", companyScoped: false, prune: false },
+  { table: "customers", collection: "customers", companyScoped: true, prune: false },
+  { table: "workorders", collection: "workorders", companyScoped: true, prune: false },
+  { table: "quotes", collection: "quotes", companyScoped: true, prune: false },
+  { table: "invoices", collection: "invoices", companyScoped: true, prune: false },
+  { table: "company_settings", collection: "companySettings", virtual: true, companyScoped: true, prune: false },
+  { table: "modules", collection: "companyModules", virtual: true, companyScoped: true, prune: false },
+  { table: "permissions", collection: "userPermissions", virtual: true, companyScoped: false, prune: false },
+  { table: "branding", collection: "companyBranding", virtual: true, companyScoped: true, prune: false },
+  { table: "menu_layout", collection: "companyMenuLayout", virtual: true, companyScoped: true, prune: false },
+  { table: "notification_settings", collection: "notificationSettings", virtual: true, companyScoped: true, prune: false },
+];
+const SUPABASE_PRIMARY_COLLECTIONS = ["companies", "users", "customers", "workorders", "quotes", "invoices"];
+const USER_PERMISSION_FIELDS = [
+  "can_create_customer_from_call",
+  "can_create_own_appointments",
+  "can_edit_own_planning",
+  "can_create_customers",
+  "can_edit_customers",
+  "can_view_workorders",
+  "can_open_workorders",
+  "can_create_workorders",
+  "can_edit_workorders",
+  "can_delete_workorders",
+  "can_close_workorders",
+  "can_send_workorders_to_customer",
+  "can_export_workorders_pdf",
+  "can_make_quotes",
+  "can_register_payments",
+  "can_manage_inventory",
+  "can_delete_photos",
+  "can_read_email",
+  "can_reply_email",
+  "can_archive_email",
+  "can_connect_mailbox",
+  "can_manage_email_templates",
+  "can_use_whatsapp",
+  "can_reply_whatsapp",
+];
 const DEFAULT_STORAGE_CONFIG = {
   provider: STORAGE_PROVIDERS.LOCAL,
   pathPattern: "companyId/module/entityId/filename",
@@ -67,6 +120,9 @@ const DEFAULT_PRODUCTION_CONFIG = {
     supabaseReady: true,
     tenantColumn: "companyId",
     rlsPrepared: true,
+    centralDatabaseRequired: true,
+    localStorageAsPrimary: false,
+    snapshotTable: "app_state_snapshots",
   },
   backups: {
     enabled: true,
@@ -90,6 +146,65 @@ const ROLES = {
   COMPANY_ADMIN: "company_admin",
   PLATFORM_ADMIN: "platform_admin",
 };
+
+const MONTEUR_DASHBOARD_ITEMS = [
+  {
+    key: "planning",
+    route: "start/planning",
+    title: "Planning",
+    description: "Bekijk je planning, adressen en werkbonnen.",
+    icon: "P",
+  },
+  {
+    key: "workorders",
+    route: () => (hasWorkorderPermission("can_create_workorders") ? "new" : "active"),
+    title: "Werkbonnen",
+    description: "Open toegewezen werkbonnen of maak een nieuwe werkbon.",
+    icon: "W",
+  },
+  {
+    key: "active-projects",
+    route: "active",
+    title: "Lopende projecten",
+    description: "Ga verder met open projectregistraties.",
+    icon: "Open",
+  },
+  {
+    key: "completed-projects",
+    route: "completed",
+    title: "Afgeronde projecten",
+    description: "Bekijk afgeronde registraties en rapporten.",
+    icon: "Done",
+  },
+  {
+    key: "appliances",
+    route: "appliances",
+    title: "Toestellendatabase",
+    description: "Bekijk toestelgegevens via toegewezen werkbonnen.",
+    icon: "T",
+  },
+  {
+    key: "customers",
+    route: "customers",
+    title: "Klanten",
+    description: "Bekijk klanten gekoppeld aan jouw planning en werkbonnen.",
+    icon: "K",
+  },
+  {
+    key: "van-stock",
+    route: "busvoorraad",
+    title: "Busvoorraad",
+    description: "Bekijk voorraad, besteladvies en inventarisatie.",
+    icon: "B",
+  },
+  {
+    key: "notifications",
+    route: "notifications",
+    title: "Meldingen",
+    description: "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen.",
+    icon: "M",
+  },
+];
 
 const seedCompanies = [
   {
@@ -449,18 +564,519 @@ let ui = {
   profitFrom: "",
   profitTo: "",
   platformTab: "Overzicht",
+  serverSave: {
+    pending: false,
+    action: "",
+    status: "",
+    message: "",
+    lastSavedAt: "",
+  },
 };
 let renderDebounceTimer = null;
+let remoteSaveTimer = null;
+let remoteSaveInFlight = false;
+let remoteSaveQueued = false;
+let remoteLoadComplete = false;
 
 function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return createInitialState();
+  const base = createInitialState();
+  base.session = loadLocalSession();
+  return normalizeState(base);
+}
+
+function loadLocalSession() {
   try {
-    const parsed = JSON.parse(raw);
-    return normalizeState({ ...createInitialState(), ...parsed });
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+    const legacy = localStorage.getItem(STORAGE_KEY);
+    if (!legacy) return null;
+    return JSON.parse(legacy)?.session || null;
   } catch {
-    return createInitialState();
+    return null;
   }
+}
+
+function saveLocalSessionOnly() {
+  if (state.session) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state.session));
+  else localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+function saveLocalUiPreferences() {
+  const payload = {
+    dashboardTab: ui.dashboardTab,
+    platformTab: ui.platformTab,
+    planningView: ui.planningView,
+    planningDate: ui.planningDate,
+    planningMechanic: ui.planningMechanic,
+  };
+  localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function applyLocalUiPreferences() {
+  try {
+    const raw = localStorage.getItem(UI_STORAGE_KEY);
+    if (!raw) return;
+    Object.assign(ui, JSON.parse(raw));
+  } catch {
+    // UI preferences are optional and can be recreated.
+  }
+}
+
+function databaseConfig() {
+  const config = { ...CENTRAL_DATABASE_CONFIG };
+  config.supabaseUrl = String(config.supabaseUrl || "").replace(/\/+$/, "");
+  config.snapshotTable = config.snapshotTable || "app_state_snapshots";
+  config.snapshotId = config.snapshotId || "production";
+  return config;
+}
+
+function centralDatabaseEnabled() {
+  const config = databaseConfig();
+  return config.provider === "supabase" && Boolean(config.supabaseUrl && config.anonKey);
+}
+
+function centralDatabaseStatusLabel() {
+  return centralDatabaseEnabled() ? "Supabase/PostgreSQL actief" : "Niet verbonden";
+}
+
+function centralDatabaseHeaders(extra = {}) {
+  const config = databaseConfig();
+  return {
+    apikey: config.anonKey,
+    Authorization: `Bearer ${config.anonKey}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
+    ...extra,
+  };
+}
+
+function centralDatabaseSnapshotUrl() {
+  const config = databaseConfig();
+  return `${config.supabaseUrl}/rest/v1/${config.snapshotTable}`;
+}
+
+function supabaseTableUrl(tableName, query = "") {
+  const config = databaseConfig();
+  return `${config.supabaseUrl}/rest/v1/${tableName}${query}`;
+}
+
+function recordId(record, fallbackPrefix = "record") {
+  return String(record?.id || record?.uuid || record?.email || uid(fallbackPrefix));
+}
+
+function recordUpdatedAt(record) {
+  return record?.updated_at || record?.updatedAt || record?.created_at || record?.createdAt || new Date().toISOString();
+}
+
+function cloneForDatabase(record) {
+  return JSON.parse(JSON.stringify(record || {}));
+}
+
+function extractUserRights(user) {
+  const permissions = {};
+  const fields = [
+    ...USER_PERMISSION_FIELDS,
+    ...(typeof allUserPermissionFields === "function" ? allUserPermissionFields() : []),
+    ...Object.keys(USER_PERMISSION_ALIASES || {}),
+    ...Object.values(USER_PERMISSION_ALIASES || {}),
+  ].filter((field, index, arr) => field && arr.indexOf(field) === index);
+  fields.forEach((field) => {
+    permissions[field] = Boolean(user?.[field]);
+  });
+  return {
+    id: user?.id || user?.email || uid("rights"),
+    user_id: user?.id || "",
+    email: user?.email || "",
+    name: user?.name || "",
+    company_id: user?.company_id || user?.companyId || null,
+    role: user?.role || ROLES.MECHANIC,
+    permissions,
+    updated_at: recordUpdatedAt(user),
+  };
+}
+
+function buildSupabaseRows(definition, sourceState = state) {
+  if (definition.collection === "companySettings") {
+    const companies = sourceState.companies || [];
+    return companies.map((company) => {
+      const companyId = company.company_id || company.companyId || company.id;
+      const payload = {
+        id: companyId,
+        company_id: companyId,
+        company_settings: company.settings || {},
+        global_settings: companyId === DEFAULT_COMPANY_ID ? sourceState.settings || {} : {},
+        updated_at: recordUpdatedAt(company),
+      };
+      return { id: companyId, company_id: companyId, payload, updated_at: new Date().toISOString() };
+    });
+  }
+  if (definition.collection === "companyModules") {
+    return (sourceState.companies || []).map((company) => ({
+      id: recordId(company, "company-modules"),
+      company_id: company.company_id || company.companyId || company.id,
+      payload: {
+        id: recordId(company, "company-modules"),
+        company_id: company.company_id || company.companyId || company.id,
+        company_name: company.name || "",
+        modules_enabled: company.modules_enabled || {},
+        subscription_status: company.subscription_status || "active",
+        updated_at: recordUpdatedAt(company),
+      },
+      updated_at: new Date().toISOString(),
+    }));
+  }
+  if (definition.collection === "userPermissions") {
+    return (sourceState.users || []).map((user) => {
+      const rights = extractUserRights(user);
+      return {
+        id: rights.id,
+        company_id: rights.company_id,
+        payload: rights,
+        updated_at: new Date().toISOString(),
+      };
+    });
+  }
+  if (definition.collection === "companyBranding") {
+    return (sourceState.companies || []).map((company) => {
+      const companyId = company.company_id || company.companyId || company.id;
+      const payload = {
+        id: companyId,
+        company_id: companyId,
+        name: company.name || "",
+        logo: company.logo || "",
+        logo_url: company.logo_url || "",
+        logo_data: company.logo_data || "",
+        primary_color: company.primary_color || "",
+        secondary_color: company.secondary_color || "",
+        branding: company.branding || {},
+        branding_updated_at: company.branding_updated_at || company.updated_at || "",
+      };
+      return { id: companyId, company_id: companyId, payload, updated_at: new Date().toISOString() };
+    });
+  }
+  if (definition.collection === "companyMenuLayout") {
+    return (sourceState.companies || []).map((company) => {
+      const companyId = company.company_id || company.companyId || company.id;
+      const payload = {
+        id: companyId,
+        company_id: companyId,
+        menu_layouts: company.menu_layouts || company.settings?.menu_layouts || {},
+        menu_favorites: company.menu_favorites || company.settings?.menu_favorites || {},
+        updated_at: recordUpdatedAt(company),
+      };
+      return { id: companyId, company_id: companyId, payload, updated_at: new Date().toISOString() };
+    });
+  }
+  if (definition.collection === "notificationSettings") {
+    const companyId = sourceState.settings?.company_id || sourceState.settings?.companyId || DEFAULT_COMPANY_ID;
+    const payload = {
+      id: companyId,
+      company_id: companyId,
+      notifications_enabled: sourceState.settings?.notifications_enabled !== false,
+      planning_notifications_enabled: sourceState.settings?.planning_notifications_enabled !== false,
+      workorder_notifications_enabled: sourceState.settings?.workorder_notifications_enabled !== false,
+      emergency_notifications_enabled: sourceState.settings?.emergency_notifications_enabled !== false,
+      push_notifications_enabled: Boolean(sourceState.settings?.push_notifications_enabled),
+      updated_at: new Date().toISOString(),
+    };
+    return [{ id: companyId, company_id: companyId, payload, updated_at: new Date().toISOString() }];
+  }
+  return (sourceState[definition.collection] || []).map((record) => ({
+    id: recordId(record, definition.collection),
+    company_id: record?.role === ROLES.PLATFORM_ADMIN ? null : record?.company_id || record?.companyId || record?.id || null,
+    payload: cloneForDatabase(record),
+    updated_at: recordUpdatedAt(record),
+  }));
+}
+
+async function fetchSupabaseTableRows(tableName) {
+  const response = await fetch(supabaseTableUrl(tableName, "?select=id,company_id,payload,updated_at"), {
+    headers: centralDatabaseHeaders({ Accept: "application/json" }),
+  });
+  if (!response.ok) throw new Error(`Supabase tabel ${tableName} laden mislukt: ${response.status}`);
+  return response.json();
+}
+
+async function upsertSupabaseRows(tableName, rows) {
+  if (!rows.length) return true;
+  const response = await fetch(supabaseTableUrl(tableName), {
+    method: "POST",
+    headers: centralDatabaseHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
+    body: JSON.stringify(rows),
+  });
+  if (!response.ok) throw new Error(`Supabase tabel ${tableName} opslaan mislukt: ${response.status}`);
+  return true;
+}
+
+async function deleteSupabaseRowsNotIn(tableName, currentIds) {
+  const existingRows = await fetchSupabaseTableRows(tableName);
+  const keep = new Set(currentIds.map(String));
+  const staleRows = existingRows.filter((row) => !keep.has(String(row.id)));
+  for (const row of staleRows) {
+    const response = await fetch(supabaseTableUrl(tableName, `?id=eq.${encodeURIComponent(row.id)}`), {
+      method: "DELETE",
+      headers: centralDatabaseHeaders({ Prefer: "return=minimal" }),
+    });
+    if (!response.ok) throw new Error(`Supabase tabel ${tableName} verwijderen mislukt: ${response.status}`);
+  }
+}
+
+function mergeSupabaseEntityRows(baseState, rowsByCollection) {
+  SUPABASE_PRIMARY_COLLECTIONS.forEach((collection) => {
+    const records = rowsByCollection[collection] || [];
+    if (records.length) {
+      baseState[collection] = records.map((row) => ({ ...(row.payload || {}), id: row.payload?.id || row.id, company_id: row.payload?.company_id ?? row.company_id }));
+    }
+  });
+  const settingsRows = rowsByCollection.companySettings || [];
+  settingsRows.forEach((row) => {
+    const payload = row.payload || {};
+    const companyId = payload.company_id || row.company_id || row.id;
+    const company = (baseState.companies || []).find((item) => (item.id || item.company_id || item.companyId) === companyId);
+    if (company) company.settings = { ...(company.settings || {}), ...(payload.company_settings || {}) };
+    if (companyId === DEFAULT_COMPANY_ID && payload.global_settings) {
+      baseState.settings = { ...(baseState.settings || {}), ...payload.global_settings };
+    }
+  });
+  const moduleRows = rowsByCollection.companyModules || [];
+  if (moduleRows.length) {
+    moduleRows.forEach((row) => {
+      const payload = row.payload || {};
+      const companyId = payload.company_id || row.company_id || row.id;
+      const company = (baseState.companies || []).find((item) => (item.id || item.company_id || item.companyId) === companyId);
+      if (company) company.modules_enabled = payload.modules_enabled || company.modules_enabled || {};
+    });
+  }
+  const rightsRows = rowsByCollection.userPermissions || [];
+  if (rightsRows.length) {
+    rightsRows.forEach((row) => {
+      const payload = row.payload || {};
+      const payloadCompanyId = payload.company_id ?? row.company_id ?? null;
+      const payloadRole = payload.role || "";
+      const user = (baseState.users || []).find((item) => {
+        const sameUser = item.id === (payload.user_id || row.id) || String(item.email || "").toLowerCase() === String(payload.email || "").toLowerCase();
+        if (!sameUser) return false;
+        const userCompanyId = recordCompanyId(item) || null;
+        const sameCompany = userRole(item) === ROLES.PLATFORM_ADMIN ? payloadCompanyId === null : String(userCompanyId || "") === String(payloadCompanyId || "");
+        const sameRole = !payloadRole || userRole(item) === payloadRole;
+        return sameCompany && sameRole;
+      });
+      if (user) {
+        Object.assign(user, payload.permissions || {});
+        user.permissions_updated_at = payload.updated_at || row.updated_at || user.permissions_updated_at || "";
+        console.info("[WerkbonSysteem] permissions geladen uit Supabase", {
+          user_id: user.id,
+          email: user.email,
+          role: userRole(user),
+          company_id: recordCompanyId(user) || null,
+          source: "Supabase",
+          permissions: payload.permissions || {},
+          updated_at: user.permissions_updated_at,
+        });
+      }
+    });
+  }
+  const brandingRows = rowsByCollection.companyBranding || [];
+  brandingRows.forEach((row) => {
+    const payload = row.payload || {};
+    const companyId = payload.company_id || row.company_id || row.id;
+    const company = (baseState.companies || []).find((item) => (item.id || item.company_id || item.companyId) === companyId);
+    if (!company) return;
+    Object.assign(company, {
+      name: payload.name || company.name,
+      logo: payload.logo ?? company.logo,
+      logo_url: payload.logo_url ?? company.logo_url,
+      logo_data: payload.logo_data ?? company.logo_data,
+      primary_color: payload.primary_color || company.primary_color,
+      secondary_color: payload.secondary_color || company.secondary_color,
+      branding: { ...(company.branding || {}), ...(payload.branding || {}) },
+      branding_updated_at: payload.branding_updated_at || company.branding_updated_at,
+    });
+  });
+  const menuRows = rowsByCollection.companyMenuLayout || [];
+  menuRows.forEach((row) => {
+    const payload = row.payload || {};
+    const companyId = payload.company_id || row.company_id || row.id;
+    const company = (baseState.companies || []).find((item) => (item.id || item.company_id || item.companyId) === companyId);
+    if (!company) return;
+    company.menu_layouts = payload.menu_layouts || company.menu_layouts || {};
+    company.menu_favorites = payload.menu_favorites || company.menu_favorites || {};
+    company.settings = {
+      ...(company.settings || {}),
+      menu_layouts: company.menu_layouts,
+      menu_favorites: company.menu_favorites,
+    };
+  });
+  const notificationRows = rowsByCollection.notificationSettings || [];
+  notificationRows.forEach((row) => {
+    const payload = row.payload || {};
+    const companyId = payload.company_id || row.company_id || row.id;
+    if (companyId !== DEFAULT_COMPANY_ID) return;
+    baseState.settings = {
+      ...(baseState.settings || {}),
+      notifications_enabled: payload.notifications_enabled !== false,
+      planning_notifications_enabled: payload.planning_notifications_enabled !== false,
+      workorder_notifications_enabled: payload.workorder_notifications_enabled !== false,
+      emergency_notifications_enabled: payload.emergency_notifications_enabled !== false,
+      push_notifications_enabled: Boolean(payload.push_notifications_enabled),
+    };
+  });
+  return baseState;
+}
+
+async function loadStateFromSupabaseEntities() {
+  const rowsByCollection = {};
+  for (const definition of SUPABASE_ENTITY_TABLES) {
+    const rows = await fetchSupabaseTableRows(definition.table);
+    rowsByCollection[definition.collection] = rows;
+  }
+  console.info("[WerkbonSysteem] data geladen", {
+    source: "Supabase",
+    tables: Object.fromEntries(Object.entries(rowsByCollection).map(([collection, rows]) => [collection, rows.length])),
+  });
+  const hasRemoteBusinessData = SUPABASE_PRIMARY_COLLECTIONS.some((collection) => (rowsByCollection[collection] || []).length > 0);
+  if (!hasRemoteBusinessData) return null;
+  return normalizeState(mergeSupabaseEntityRows(createInitialState(), rowsByCollection));
+}
+
+async function refreshStateFromSupabaseEntities() {
+  const rowsByCollection = {};
+  for (const definition of SUPABASE_ENTITY_TABLES) {
+    const rows = await fetchSupabaseTableRows(definition.table);
+    rowsByCollection[definition.collection] = rows;
+  }
+  console.info("[WerkbonSysteem] data opnieuw geladen", {
+    source: "Supabase",
+    tables: Object.fromEntries(Object.entries(rowsByCollection).map(([collection, rows]) => [collection, rows.length])),
+  });
+  const session = loadLocalSession();
+  state = normalizeState({ ...mergeSupabaseEntityRows(state, rowsByCollection), session });
+  return true;
+}
+
+function loadLegacyLocalStateForMigration() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const hasLegacyData = SUPABASE_PRIMARY_COLLECTIONS.some((collection) => Array.isArray(parsed?.[collection]) && parsed[collection].length > 0);
+    if (!hasLegacyData) return null;
+    return normalizeState({ ...createInitialState(), ...parsed, session: loadLocalSession() });
+  } catch {
+    return null;
+  }
+}
+
+async function persistStateToSupabaseEntities(sourceState = state) {
+  if (!centralDatabaseEnabled()) return false;
+  const normalizedSource = normalizeProductionTenantState(sourceState);
+  for (const definition of SUPABASE_ENTITY_TABLES) {
+    const rows = buildSupabaseRows(definition, normalizedSource);
+    await upsertSupabaseRows(definition.table, rows);
+    if (definition.prune) {
+      await deleteSupabaseRowsNotIn(definition.table, rows.map((row) => row.id));
+    }
+  }
+  return true;
+}
+
+async function persistPermissionsToSupabase(sourceState = state) {
+  if (!centralDatabaseEnabled()) throw new Error("Supabase is niet geconfigureerd.");
+  normalizeProductionTenantState(sourceState);
+  const definition = SUPABASE_ENTITY_TABLES.find((item) => item.table === "permissions");
+  if (!definition) throw new Error("Permissions tabel is niet geconfigureerd in de app.");
+  const rows = buildSupabaseRows(definition, sourceState);
+  await upsertSupabaseRows("permissions", rows);
+  return rows;
+}
+
+function centralDatabaseStatePayload() {
+  const clone = JSON.parse(JSON.stringify(state));
+  clone.session = null;
+  clone.__meta = {
+    app: "WerkbonSysteem.nl",
+    storage: "supabase_postgresql",
+    updated_at: new Date().toISOString(),
+    collections: PRODUCTION_ENTITY_COLLECTIONS,
+  };
+  return clone;
+}
+
+async function loadStateFromCentralDatabase() {
+  if (!centralDatabaseEnabled()) {
+    remoteLoadComplete = true;
+    console.warn("[WerkbonSysteem] centrale database niet geconfigureerd", { source: "localStorage", usage: "sessie/UI-only" });
+    return false;
+  }
+  try {
+    const entityState = await loadStateFromSupabaseEntities();
+    if (entityState) {
+      const session = loadLocalSession();
+      state = normalizeState({ ...entityState, session });
+      state.databaseSyncError = "";
+      state.databaseMigrationStatus = "Data geladen uit Supabase.";
+      remoteLoadComplete = true;
+      return true;
+    }
+    const legacyState = loadLegacyLocalStateForMigration();
+    if (legacyState) {
+      state = normalizeState({ ...legacyState, session: loadLocalSession() });
+      await persistStateToSupabaseEntities(state);
+      localStorage.removeItem(STORAGE_KEY);
+      state.lastCentralDatabaseSyncAt = new Date().toISOString();
+      state.databaseMigrationStatus = "Legacy localStorage data gemigreerd naar Supabase PostgreSQL.";
+      remoteLoadComplete = true;
+      return true;
+    }
+    await persistStateToSupabaseEntities(state);
+    state.lastCentralDatabaseSyncAt = new Date().toISOString();
+    state.databaseMigrationStatus = "Initiële demo-/seeddata aangemaakt in Supabase PostgreSQL.";
+    remoteLoadComplete = true;
+    return true;
+  } catch (entityError) {
+    remoteLoadComplete = true;
+    console.error("[WerkbonSysteem] Supabase laden mislukt; geen localStorage fallback voor bedrijfsdata", entityError);
+    state.databaseSyncError = entityError.message || "Supabase data-/instellingentabellen niet bereikbaar.";
+    state.session = null;
+    saveLocalSessionOnly();
+    return false;
+  }
+}
+
+async function persistStateToCentralDatabase() {
+  if (!centralDatabaseEnabled()) return false;
+  if (remoteSaveInFlight) {
+    remoteSaveQueued = true;
+    return false;
+  }
+  remoteSaveInFlight = true;
+  try {
+    await persistStateToSupabaseEntities(state);
+    await refreshStateFromSupabaseEntities();
+    const syncedAt = new Date().toISOString();
+    state.databaseSyncError = "";
+    state.lastCentralDatabaseSyncAt = syncedAt;
+    state.databaseMigrationStatus = "Supabase data en instellingen opgeslagen en opnieuw opgehaald.";
+    return true;
+  } catch (error) {
+    console.warn("Centrale database opslaan mislukt", error);
+    state.databaseSyncError = error.message || "Centrale database opslaan mislukt.";
+    return false;
+  } finally {
+    remoteSaveInFlight = false;
+    if (remoteSaveQueued) {
+      remoteSaveQueued = false;
+      scheduleRemoteSave();
+    }
+  }
+}
+
+function scheduleRemoteSave() {
+  if (!centralDatabaseEnabled()) return;
+  clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = setTimeout(() => {
+    persistStateToCentralDatabase();
+  }, 250);
 }
 
 function normalizeState(input) {
@@ -946,7 +1562,13 @@ function addDemoData(demoState) {
 
 function saveState() {
   normalizeProductionTenantState(state);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveLocalSessionOnly();
+  saveLocalUiPreferences();
+  if (centralDatabaseEnabled()) {
+    scheduleRemoteSave();
+  } else {
+    console.warn("Centrale database is niet geconfigureerd; productiedata wordt niet meer als hoofdopslag in localStorage opgeslagen.");
+  }
 }
 
 function uid(prefix) {
@@ -1212,13 +1834,21 @@ function mechanicNamesByIds(ids = []) {
 
 function logout() {
   state.session = null;
-  saveState();
+  saveLocalSessionOnly();
+  saveLocalUiPreferences();
   location.hash = "#/login";
   render();
 }
 
-function login(event) {
+async function login(event) {
   event.preventDefault();
+  if (centralDatabaseEnabled()) {
+    const loaded = await loadStateFromCentralDatabase();
+    if (!loaded) {
+      document.getElementById("login-error").textContent = "Serverdata kon niet worden geladen.";
+      return;
+    }
+  }
   const form = new FormData(event.target);
   const email = String(form.get("email") || "").trim().toLowerCase();
   const password = String(form.get("password") || "");
@@ -1233,17 +1863,23 @@ function login(event) {
     return;
   }
   state.session = { userId: user.id, loggedInAt: new Date().toISOString() };
-  saveState();
+  saveLocalSessionOnly();
+  saveLocalUiPreferences();
   location.hash = defaultRouteForUser(user);
 }
 
-function quickLogin(email) {
+async function quickLogin(email) {
+  if (centralDatabaseEnabled()) {
+    const loaded = await loadStateFromCentralDatabase();
+    if (!loaded) return alert("Serverdata kon niet worden geladen.");
+  }
   const user = state.users.find((item) => item.email.toLowerCase() === email.toLowerCase() && item.active);
   if (!user) return;
   const company = user.role === ROLES.PLATFORM_ADMIN ? null : byId(state.companies || [], recordCompanyId(user));
   if (company && company.active === false) return;
   state.session = { userId: user.id, loggedInAt: new Date().toISOString() };
-  saveState();
+  saveLocalSessionOnly();
+  saveLocalUiPreferences();
   location.hash = defaultRouteForUser(user);
 }
 
@@ -1551,7 +2187,7 @@ function renderBottomNav(route) {
     .join("")}</nav>`;
 }
 
-function renderRoute(route) {
+function legacyRenderRoute1(route) {
   const [name, id] = route.split("/");
   if (name === "login") return renderLogin();
   if (!currentUser()) return renderLogin();
@@ -1569,7 +2205,7 @@ function renderRoute(route) {
   return renderHome();
 }
 
-function renderHome() {
+function legacyRenderHome1() {
   const open = state.projects.filter((p) => p.status === "Open").length;
   const done = state.projects.filter((p) => p.status === "Afgerond").length;
   return `
@@ -2964,7 +3600,7 @@ function renderNoOfficeAccess() {
   return `<section class="panel empty"><h2>Geen toegang tot adminomgeving</h2><p>Je account heeft geen toegang tot deze omgeving. Je wordt teruggestuurd naar Start.</p></section>`;
 }
 
-function renderHome() {
+function legacyRenderHome2() {
   const projects = visibleProjects();
   const open = projects.filter(isProjectOpen).length;
   const done = projects.filter(isProjectCompleted).length;
@@ -3442,7 +4078,7 @@ function renderUsers() {
         <td><select onchange="updateUser('${user.id}', 'role', this.value)">${roleOptions.map(([value, label]) => `<option value="${value}" ${user.role === value ? "selected" : ""}>${label}</option>`).join("")}</select></td>
         <td>
           <div class="button-row" style="margin-top:0">
-            <button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button>
+            ${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}
             <button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button>
             <button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button>
           </div>
@@ -3494,9 +4130,21 @@ function addUser(event) {
   render();
 }
 
-function saveUserRow() {
-  saveState();
-  render();
+async function saveUserRow() {
+  setServerSavePending("permissions");
+  try {
+    await persistPermissionsToSupabase(state);
+    await refreshStateFromSupabaseEntities();
+    state.databaseSyncError = "";
+    state.databaseMigrationStatus = "Rechten opgeslagen op Supabase en opnieuw geladen.";
+    saveLocalSessionOnly();
+    saveLocalUiPreferences();
+    setServerSaveSuccess("Wijzigingen succesvol opgeslagen");
+  } catch (error) {
+    console.error("Rechten opslaan mislukt", error);
+    state.databaseSyncError = error.message || "Wijzigingen konden niet worden opgeslagen op de server.";
+    setServerSaveError("Wijzigingen konden niet worden opgeslagen op de server.");
+  }
 }
 
 function toggleUserActive(userId) {
@@ -10100,7 +10748,7 @@ function renderNotificationSettings() {
         </select>
       </label>`).join("")}
     </div>
-    <div class="info-box" style="margin-top:12px">Push delivery is voorbereid in het datamodel voor browser, Android en iPhone. De huidige standalone app gebruikt localStorage en toont in-app meldingen.</div>
+    <div class="info-box" style="margin-top:12px">Push delivery is voorbereid in het datamodel voor browser, Android en iPhone. Productiedata gebruikt de centrale database wanneer Supabase/PostgreSQL is geconfigureerd; localStorage is alleen nog voor sessie en UI-voorkeuren.</div>
   </section>
   <div style="margin-top:14px">${renderAdminNotifications()}</div>`;
 }
@@ -10359,7 +11007,7 @@ function renderCallCustomerForm() {
   </section>` : ""}`;
 }
 
-function renderHome() {
+function legacyRenderHome3() {
   const projects = visibleProjects();
   const open = projects.filter(isProjectOpen).length;
   const done = projects.filter(isProjectCompleted).length;
@@ -10413,7 +11061,7 @@ function renderUsers() {
         <td>${escapeHtml(user.role === ROLES.PLATFORM_ADMIN ? "Platform" : byId(state.companies || [], recordCompanyId(user))?.name || recordCompanyId(user))}</td>
         <td><select onchange="updateUser('${user.id}', 'role', this.value)">${roleOptions.map(([value, label]) => `<option value="${value}" ${user.role === value ? "selected" : ""}>${label}</option>`).join("")}</select></td>
         <td>${user.role === ROLES.MECHANIC ? `<select onchange="updateUser('${user.id}', 'can_create_customer_from_call', this.value === 'true')"><option value="false" ${!user.can_create_customer_from_call ? "selected" : ""}>Nee</option><option value="true" ${user.can_create_customer_from_call ? "selected" : ""}>Ja</option></select>` : "-"}</td>
-        <td><div class="button-row" style="margin-top:0"><button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button><button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
+        <td><div class="button-row" style="margin-top:0">${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}<button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
       </tr>`).join("")}</tbody>
     </table></div>
     ${pendingDeleteUser ? `<section class="modal-backdrop"><div class="panel confirm-modal"><h2>Gebruiker verwijderen</h2><p>Weet je zeker dat je deze gebruiker wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.</p><div class="button-row"><button class="btn secondary" type="button" onclick="cancelDeleteUser()">Annuleren</button><button class="btn danger" type="button" onclick="confirmDeleteUser()">Definitief verwijderen</button></div></div></section>` : ""}`;
@@ -10476,7 +11124,7 @@ function renderBottomNav(route) {
     .join("")}</nav>`;
 }
 
-function renderRoute(route) {
+function legacyRenderRoute2(route) {
   const [name, id] = route.split("/");
   if (name === "login") return renderLogin();
   if (!currentUser()) return renderLogin();
@@ -11773,7 +12421,7 @@ function completeProject(projectId) {
   location.hash = canMechanicCreateQuote() ? `#/settlement/${projectId}` : `#/summary/${projectId}`;
 }
 
-function renderRoute(route) {
+function legacyRenderRoute3(route) {
   const [name, id] = route.split("/");
   if (name === "login") return renderLogin();
   if (!currentUser()) return renderLogin();
@@ -12252,7 +12900,7 @@ function mechanicAgendaScope() {
   return ["today", "week", "all"].includes(scope) ? scope : "week";
 }
 
-function renderHome() {
+function legacyRenderHome4() {
   const projects = visibleProjects();
   const open = projects.filter(isProjectOpen).length;
   const done = projects.filter(isProjectCompleted).length;
@@ -12532,7 +13180,7 @@ function pageTitle(route) {
   return ["WerkbonSysteem.nl", "Multi-company werkbonplatform."];
 }
 
-function renderRoute(route) {
+function legacyRenderRoute4(route) {
   const [name, id, sub] = route.split("/");
   if (name === "login") return renderLogin();
   if (!currentUser()) return renderLogin();
@@ -12790,6 +13438,64 @@ function mechanicVisibleCustomers() {
     if (project.customer_id || project.customerId) customerIds.add(project.customer_id || project.customerId);
   });
   return (state.customers || []).filter((customer) => recordCompanyId(customer) === currentCompanyId() && (customerIds.has(customer.id) || customer.created_by === user.id));
+}
+
+function renderMechanicCustomers() {
+  const rows = mechanicVisibleCustomers();
+  return `<section class="customers-page">
+    <section class="office-page-head">
+      <div><h2>Klanten</h2><p>Alleen klanten die gekoppeld zijn aan jouw planning, werkbonnen of zelf aangemaakte klanten.</p></div>
+      ${hasMechanicPermission("can_create_customers") ? `<button class="btn success" type="button" onclick="openMechanicCustomerCreate()">Klant aanmaken</button>` : ""}
+    </section>
+    <section class="stats">
+      <div class="stat-card"><span>Zichtbare klanten</span><strong>${rows.length}</strong></div>
+      <div class="stat-card"><span>Eigen afspraken</span><strong>${filteredPlanningRowsForMechanic().length}</strong></div>
+    </section>
+    <section class="customers-list">
+      ${rows.length ? rows.map((customer) => `<article class="customer-card">
+        <div class="customer-card-main">
+          <div><h3>${escapeHtml(customer.customer_name || "-")}</h3><p>${escapeHtml([customer.address, customer.postal_code, customer.city].filter(Boolean).join(", ") || "Geen adres")}</p></div>
+          <span class="badge ${customer.active === false ? "danger" : "ok"}">${customer.active === false ? "Inactief" : "Actief"}</span>
+        </div>
+        <div class="customer-card-grid">
+          <div><span>Telefoon</span><strong>${escapeHtml(customer.phone || "-")}</strong></div>
+          <div><span>E-mail</span><strong>${escapeHtml(customer.email || "-")}</strong></div>
+          <div><span>Notities</span><strong>${escapeHtml(customer.notes || "-")}</strong></div>
+        </div>
+      </article>`).join("") : `<section class="panel empty">Geen klanten gekoppeld aan jouw planning of werkbonnen.</section>`}
+    </section>
+    ${ui.creatingMechanicCustomer ? renderMechanicCustomerModal() : ""}
+  </section>`;
+}
+
+function mechanicVisibleAppliances() {
+  const user = currentUser();
+  if (!user) return [];
+  const ownProjectIds = new Set(visibleProjects().map((project) => project.id));
+  const ownCustomerIds = new Set(mechanicVisibleCustomers().map((customer) => customer.id));
+  return companyScoped(state.appliances || []).filter((appliance) =>
+    appliance.mechanic_id === user.id ||
+    ownProjectIds.has(appliance.project_id || appliance.projectId || appliance.workorder_id || appliance.workorderId) ||
+    ownCustomerIds.has(appliance.customer_id || appliance.customerId) ||
+    (appliance.service_history || []).some((entry) => entry.mechanic_id === user.id)
+  );
+}
+
+function renderMechanicApplianceDatabase() {
+  const rows = mechanicVisibleAppliances();
+  return `<section class="customers-page">
+    <section class="office-page-head"><div><h2>Toestellendatabase</h2><p>Alleen toestellen gekoppeld aan jouw klanten, planning of werkbonnen.</p></div></section>
+    <section class="stats">
+      <div class="stat-card"><span>Zichtbare toestellen</span><strong>${rows.length}</strong></div>
+      <div class="stat-card"><span>Merken</span><strong>${new Set(rows.map((row) => row.brand).filter(Boolean)).size}</strong></div>
+    </section>
+    <section class="panel">
+      ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Merk</th><th>Type</th><th>Serienummer</th><th>Bouwjaar</th><th>Klant</th><th>Adres</th><th>Laatste werkzaamheden</th></tr></thead><tbody>${rows.map((row) => {
+        const customer = byId(state.customers || [], row.customer_id || row.customerId);
+        return `<tr><td>${escapeHtml(row.brand || "-")}</td><td>${escapeHtml(row.model || row.appliance_type || "-")}</td><td>${escapeHtml(row.serial_number || "-")}</td><td>${escapeHtml(row.build_year || "-")}</td><td>${escapeHtml(customer?.customer_name || row.customer_name || "-")}</td><td>${escapeHtml([customer?.address || row.address, customer?.city || row.city].filter(Boolean).join(", ") || "-")}</td><td>${escapeHtml(row.work_type || row.work_description || "-")}</td></tr>`;
+      }).join("")}</tbody></table></div>` : `<p class="muted">Geen toestellen gekoppeld aan jouw werk.</p>`}
+    </section>
+  </section>`;
 }
 
 function saveNewPlanningEvent(event) {
@@ -13078,7 +13784,7 @@ function renderUsers() {
         <td><select onchange="updateUser('${user.id}', 'role', this.value)">${roleOptions.map(([value, label]) => `<option value="${value}" ${user.role === value ? "selected" : ""}>${label}</option>`).join("")}</select></td>
         ${MECHANIC_PERMISSION_FIELDS.map(([field]) => `<td>${user.role === ROLES.MECHANIC ? renderMechanicPermissionSelect(user, field) : "-"}</td>`).join("")}
         ${EMAIL_PERMISSION_FIELDS.map(([field]) => `<td>${renderUserPermissionSelect(user, field)}</td>`).join("")}
-        <td><div class="button-row" style="margin-top:0"><button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button><button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
+        <td><div class="button-row" style="margin-top:0">${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}<button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
       </tr>`).join("")}</tbody>
     </table></div>
     ${pendingDeleteUser ? `<section class="modal-backdrop"><div class="panel confirm-modal"><h2>Gebruiker verwijderen</h2><p>Weet je zeker dat je deze gebruiker wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.</p><div class="button-row"><button class="btn secondary" type="button" onclick="cancelDeleteUser()">Annuleren</button><button class="btn danger" type="button" onclick="confirmDeleteUser()">Definitief verwijderen</button></div></div></section>` : ""}`;
@@ -14703,7 +15409,7 @@ function renderUsers() {
           <td><select onchange="updateUser('${user.id}', 'role', this.value)">${roleOptions.map(([value, label]) => `<option value="${value}" ${role === value ? "selected" : ""}>${label}</option>`).join("")}</select></td>
           ${MECHANIC_PERMISSION_FIELDS.map(([field]) => `<td>${role === ROLES.MECHANIC ? renderMechanicPermissionSelect(user, field) : "-"}</td>`).join("")}
           ${EMAIL_PERMISSION_FIELDS.map(([field]) => `<td>${renderUserPermissionSelect(user, field)}</td>`).join("")}
-          <td><div class="button-row" style="margin-top:0"><button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button><button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
+          <td><div class="button-row" style="margin-top:0">${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}<button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
         </tr>`;
       }).join("")}</tbody>
     </table></div>
@@ -14794,7 +15500,7 @@ function confirmDeleteUser() {
   render();
 }
 
-function renderRoute(route) {
+function legacyRenderRoute5(route) {
   const [name, id, sub] = route.split("/");
   if (name === "login") return renderLogin();
   if (!currentUser()) return renderLogin();
@@ -14896,7 +15602,7 @@ function renderPlatformUsers() {
           <td><select onchange="updatePlatformUser('${user.id}', 'company_id', this.value)">${companies.map((company) => `<option value="${company.id}" ${companyId === company.id ? "selected" : ""}>${escapeHtml(company.name)}</option>`).join("")}</select></td>
           <td><input type="checkbox" ${user.active !== false ? "checked" : ""} onchange="updatePlatformUser('${user.id}', 'active', this.checked)" /></td>
           <td>${safeDate(user.createdAt || user.created_at)}</td>
-          <td><div class="button-row" style="margin-top:0"><button class="btn secondary" type="button" onclick="saveUserRow()">Bewerken</button><button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
+          <td><div class="button-row" style="margin-top:0">${renderServerSaveButton("permissions", "saveUserRow()", "Bewerken", "secondary")}<button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button><button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button></div></td>
         </tr>`;
       }).join("")}</tbody>
     </table></div>
@@ -15026,7 +15732,7 @@ function logPlatformAction(action, companyId = "", details = "") {
 }
 
 function platformAdminIpAddress() {
-  return "localStorage/browser";
+  return centralDatabaseEnabled() ? "browser/supabase" : "browser/local-session";
 }
 
 function ensureCompanyPlatformConfig(company) {
@@ -15783,17 +16489,27 @@ function downloadPlatformLogs() {
 function renderProductionReadinessSettings() {
   const storage = storageConfig();
   const prod = productionConfig();
+  const db = databaseConfig();
   const fileCount = (state.files || []).filter((file) => !file.deleted).length;
   const localObjectCount = (state.fileStorageObjects || []).length;
   return `<section class="panel production-readiness">
     <div class="article-head">
       <div>
         <h2>Productie/server voorbereiding</h2>
-        <p>Tenant-scheiding, PostgreSQL, storage providers, backups en auditlog zijn voorbereid voor migratie naar servergebruik.</p>
+        <p>Tenant-scheiding, centrale PostgreSQL/Supabase opslag, storage providers, backups en auditlog voor productiegebruik.</p>
       </div>
-      <span class="badge ok">${fileCount} bestandsmetadata</span>
+      <span class="badge ${centralDatabaseEnabled() ? "ok" : "warn"}">${escapeHtml(centralDatabaseStatusLabel())}</span>
     </div>
     <form class="form-grid" onsubmit="saveProductionReadinessSettings(event)">
+      <label>Database opslag
+        <select name="database_mode">
+          <option value="central" selected>Centrale database verplicht</option>
+        </select>
+      </label>
+      <label>Supabase URL <input name="supabase_url" placeholder="https://project.supabase.co" value="${escapeAttr(db.supabaseUrl || "")}" /></label>
+      <label>Supabase anon key <input name="supabase_anon_key" placeholder="eyJ..." value="${escapeAttr(db.anonKey || "")}" /></label>
+      <label>Snapshot tabel <input name="snapshot_table" value="${escapeAttr(db.snapshotTable || "app_state_snapshots")}" /></label>
+      <label>Snapshot ID <input name="snapshot_id" value="${escapeAttr(db.snapshotId || "production")}" /></label>
       <label>Storage provider
         <select name="storage_provider">
           ${Object.values(STORAGE_PROVIDERS).map((provider) => `<option value="${provider}" ${storage.provider === provider ? "selected" : ""}>${provider}</option>`).join("")}
@@ -15811,11 +16527,15 @@ function renderProductionReadinessSettings() {
       <button class="btn success" type="submit">Productie-instellingen opslaan</button>
     </form>
     <section class="meta-grid" style="margin-top:12px">
+      <div class="meta"><span>Centrale database</span><strong>${escapeHtml(centralDatabaseStatusLabel())}</strong></div>
+      <div class="meta"><span>Hoofdopslag</span><strong>Supabase/PostgreSQL snapshot table</strong></div>
       <div class="meta"><span>Bestandspad</span><strong>companyId/module/entityId/bestandsnaam</strong></div>
-      <div class="meta"><span>Database opslag</span><strong>Alleen metadata; lokale payloads zitten in dev storage objecten</strong></div>
+      <div class="meta"><span>localStorage</span><strong>Alleen sessie, UI-voorkeuren en concepten</strong></div>
       <div class="meta"><span>Lokale dev objecten</span><strong>${localObjectCount}</strong></div>
+      <div class="meta"><span>Bestandsmetadata</span><strong>${fileCount}</strong></div>
       <div class="meta"><span>Veilige verwijdering</span><strong>Alleen Platform Admin voor destructieve reset</strong></div>
     </section>
+    ${state.databaseSyncError ? `<div class="warning-block" style="margin-top:12px">${escapeHtml(state.databaseSyncError)}</div>` : ""}
   </section>`;
 }
 
@@ -15823,6 +16543,15 @@ function saveProductionReadinessSettings(event) {
   event.preventDefault();
   if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
   const form = new FormData(event.target);
+  const dbConfig = {
+    provider: "supabase",
+    supabaseUrl: String(form.get("supabase_url") || "").trim().replace(/\/+$/, ""),
+    anonKey: String(form.get("supabase_anon_key") || "").trim(),
+    snapshotTable: String(form.get("snapshot_table") || "app_state_snapshots").trim(),
+    snapshotId: String(form.get("snapshot_id") || "production").trim(),
+  };
+  Object.assign(CENTRAL_DATABASE_CONFIG, dbConfig);
+  window.WERKBON_DATABASE_CONFIG = { ...(window.WERKBON_DATABASE_CONFIG || {}), ...dbConfig };
   state.storageConfig = {
     ...storageConfig(),
     provider: String(form.get("storage_provider") || STORAGE_PROVIDERS.LOCAL),
@@ -15838,6 +16567,9 @@ function saveProductionReadinessSettings(event) {
       tenantColumn: String(form.get("tenant_column") || "companyId"),
       supabaseReady: true,
       rlsPrepared: true,
+      centralDatabaseRequired: true,
+      localStorageAsPrimary: false,
+      snapshotTable: dbConfig.snapshotTable,
     },
     backups: {
       ...productionConfig().backups,
@@ -15852,6 +16584,7 @@ function saveProductionReadinessSettings(event) {
   };
   logPlatformAction("productie-instellingen aangepast", "", `storage=${state.storageConfig.provider}, database=${state.productionConfig.database.provider}`);
   saveState();
+  persistStateToCentralDatabase();
   alert("Productie/server instellingen opgeslagen.");
   render();
 }
@@ -15947,7 +16680,7 @@ function renderPlatformResetClosed() {
   return `<div class="danger-action">
     <div>
       <strong>Alle lokale platformdata verwijderen</strong>
-      <p class="muted">Alleen gebruiken wanneer het volledige localStorage-platform bewust leeg gemaakt moet worden.</p>
+      <p class="muted">Alleen gebruiken wanneer het volledige centrale platform bewust leeg gemaakt moet worden.</p>
     </div>
     <button class="btn danger" type="button" onclick="setPlatformResetStep(1)">Resetprocedure starten</button>
   </div>`;
@@ -16097,12 +16830,15 @@ function renderRoute(route) {
     if (moduleKey && !isCompanyModuleActive(moduleKey)) return moduleInactiveMessage();
     return renderOffice(id);
   }
-  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment", "whatsapp"];
+  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment", "whatsapp", "busvoorraad", "customers", "appliances"];
   if (!mechanicRoutes.includes(name)) return defaultRouteForUser() === "#/admin" ? renderOffice() : renderHome();
   if (!isMechanic()) return renderNoOfficeAccess();
   if (name === "notifications") return renderNotificationsCenter();
+  if (name === "customers") return isCompanyModuleActive("customers") ? renderMechanicCustomers() : moduleInactiveMessage();
+  if (name === "appliances") return isCompanyModuleActive("workorders") ? renderMechanicApplianceDatabase() : moduleInactiveMessage();
   if (name === "call-customer") return canCreateCustomerFromCall() ? renderCallCustomerForm() : renderNoOfficeAccess();
   if (name === "whatsapp") return canUseWhatsApp() ? renderWhatsAppModule() : renderNoOfficeAccess();
+  if (name === "busvoorraad") return isCompanyModuleActive("van_stock") ? renderMechanicVanStock() : moduleInactiveMessage();
   if (name === "settlement") return renderSettlementPrompt(id);
   if (name === "payment") return renderMechanicPayment(id);
   if (name === "start" && id === "planning") return isCompanyModuleActive("planning") ? renderMechanicAgendaPage(sub || "week") : moduleInactiveMessage();
@@ -17274,7 +18010,7 @@ function renderUserCard(user) {
       <div class="user-title"><h3>${escapeHtml(user.name || "-")}</h3><p>${escapeHtml(user.email || "-")}</p></div>
       <span class="badge">${escapeHtml(roleLabel(role))}</span>
       <div class="button-row user-actions">
-        <button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button>
+        ${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}
         <button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button>
         <button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button>
       </div>
@@ -17380,7 +18116,7 @@ function renderUserCard(user) {
     </button>
     ${isOpen ? `<div class="user-card-expanded">
       <div class="button-row user-actions">
-        <button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button>
+        ${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}
         <button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button>
         <button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button>
       </div>
@@ -17485,6 +18221,9 @@ function updateUser(userId, field, value) {
     user.companyId = value;
   } else if (allUserPermissionFields().includes(field) || USER_PERMISSION_ALIASES[field]) {
     setUserPermissionValue(user, field, Boolean(value));
+    user.updated_at = new Date().toISOString();
+    render();
+    return;
   } else {
     user[field] = field === "active" ? Boolean(value) : value;
   }
@@ -19265,9 +20004,10 @@ function modulePermissionSummary(module) {
   return rights[module.key] || "Module rechten per gebruiker/rol";
 }
 
-function saveCompanyModules(companyId) {
+async function saveCompanyModules(companyId) {
   const company = byId(state.companies || [], companyId);
   if (!company || !isPlatformSuperAdmin()) return;
+  setServerSavePending(`modules:${companyId}`);
   const draft = platformModuleDraft(company);
   ensureCompanyModulesEnabled(company);
   const changed = [];
@@ -19288,8 +20028,19 @@ function saveCompanyModules(companyId) {
   ensureCompanyPlatformConfig(company);
   company.updated_at = new Date().toISOString();
   logPlatformAction("modules opgeslagen", company.id, changed.length ? changed.join(", ") : "Geen wijzigingen");
-  saveState();
-  render();
+  try {
+    await persistStateToSupabaseEntities(state);
+    await refreshStateFromSupabaseEntities();
+    state.databaseSyncError = "";
+    state.databaseMigrationStatus = "Modules opgeslagen op Supabase en opnieuw geladen.";
+    saveLocalSessionOnly();
+    saveLocalUiPreferences();
+    setServerSaveSuccess("Wijzigingen succesvol opgeslagen");
+  } catch (error) {
+    console.error("Modules opslaan mislukt", error);
+    state.databaseSyncError = error.message || "Wijzigingen konden niet worden opgeslagen op de server.";
+    setServerSaveError("Wijzigingen konden niet worden opgeslagen op de server.");
+  }
 }
 
 function renderPlatformModuleCheckbox(company, module) {
@@ -19341,7 +20092,7 @@ function renderPlatformModulesCompany(company) {
         ${extensions.length ? `<div class="module-check-grid">${extensions.map((module) => renderPlatformModuleCheckbox(company, module)).join("")}</div>` : `<p class="muted">Geen uitbreidingsmodules binnen de huidige filters.</p>`}
       </section>
       <div class="button-row">
-        <button class="btn success" type="button" onclick="saveCompanyModules('${company.id}')">Modules opslaan</button>
+        ${renderServerSaveButton(`modules:${company.id}`, `saveCompanyModules('${company.id}')`, "Modules opslaan", "success")}
       </div>
     </div>` : ""}
   </article>`;
@@ -20065,7 +20816,7 @@ function renderPlatformRightsUser(user) {
         <div class="module-badge-list">${activeModules.length ? activeModules.map((module) => `<span class="badge ok">${escapeHtml(module.label)}</span>`).join("") : `<span class="muted">Geen actieve modules voor dit bedrijf.</span>`}</div>
       </section>
       <div class="button-row">
-        <button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button>
+        ${renderServerSaveButton("permissions", "saveUserRow()", "Opslaan", "secondary")}
         <button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button>
         <button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button>
       </div>
@@ -20173,6 +20924,8 @@ function validateCompletion(project) {
 function pageTitle(route) {
   if (route.startsWith("login")) return ["WerkbonSysteem.nl", "Loginportaal voor werkbonnen, monteurs, voorraad en bestellingen."];
   if (route.startsWith("start/planning")) return ["Mijn planning", "Jouw planning, adressen en werkbonnen."];
+  if (route.startsWith("customers")) return ["Klanten", "Klanten gekoppeld aan jouw planning en werkbonnen."];
+  if (route.startsWith("appliances")) return ["Toestellendatabase", "Toestellen gekoppeld aan jouw werkbonnen."];
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
@@ -20200,28 +20953,29 @@ function renderHome() {
   </section>`;
 }
 
-function mechanicHomeTileDefinitions(canCreateCallCustomer) {
-  const rows = [
-    ["Planning", () => homeTile("start/planning", "Mijn planning", "Bekijk je planning, adressen en werkbonnen.", "P")],
-    ["Werkbonnen", () => `${hasWorkorderPermission("can_create_workorders") ? homeTile("new", "Nieuw project", "Start een registratie voor M001, M004 of beide.", "+") : ""}${homeTile("active", "Lopende projecten", "Ga verder met open projectregistraties.", "Open")}${homeTile("completed", "Afgeronde projecten", "Bekijk rapporten, CSV en PDF.", "Done")}`],
-    ["Klanten", () => canCreateCallCustomer ? homeTile("call-customer", "Nieuwe klant uit telefoongesprek", "Maak snel klant, notitie of afspraak.", "Tel") : ""],
-    ["Busvoorraad", () => isCompanyModuleActive("van_stock") ? homeTile("busvoorraad", "Mijn busvoorraad", "Bekijk voorraad, besteladvies en inventarisatie.", "B") : ""],
-    ["Toestellendatabase", () => isCompanyModuleActive("workorders") ? homeTile("active", "Toestellendatabase", "Bekijk toestelgegevens via toegewezen werkbonnen.", "T") : ""],
-    ["WhatsApp", () => canUseWhatsApp() ? homeTile("whatsapp", "WhatsApp", "Lees en beantwoord klantberichten.", "W") : ""],
-  ];
-  const activeLabels = activeMenuItemsForRole("mechanic").map(([label]) => label);
-  return rows.filter(([label, renderTile]) => activeLabels.includes(label) && renderTile());
+function mechanicDashboardItems() {
+  return MONTEUR_DASHBOARD_ITEMS;
+}
+
+function renderMechanicDashboardTile(item) {
+  const route = typeof item.route === "function" ? item.route() : item.route;
+  return homeTile(route, item.title, item.description, item.icon);
 }
 
 function renderMechanicHomeWithMenuOrder(weekCount, canCreateCallCustomer) {
   const favorites = officeFavoriteLabels();
-  const definitions = mechanicHomeTileDefinitions(canCreateCallCustomer);
-  const favoriteTiles = definitions.filter(([label]) => favorites.includes(label)).map(([, renderTile]) => renderTile()).join("");
-  const regularTiles = definitions.filter(([label]) => !favorites.includes(label)).map(([, renderTile]) => renderTile()).join("");
+  const definitions = mechanicDashboardItems();
+  const favoriteTiles = definitions.filter((item) => favorites.includes(item.title)).map(renderMechanicDashboardTile).join("");
+  const regularTiles = definitions.filter((item) => !favorites.includes(item.title)).map(renderMechanicDashboardTile).join("");
+  const extraTiles = [
+    canCreateCallCustomer ? homeTile("call-customer", "Nieuwe klant uit telefoongesprek", "Maak snel klant, notitie of afspraak.", "Tel") : "",
+    canUseWhatsApp() ? homeTile("whatsapp", "WhatsApp", "Lees en beantwoord klantberichten.", "W") : "",
+  ].join("");
   return `<section class="grid home-grid">
     <section class="stats full"><div class="stat-card"><span>Planning deze week</span><strong>${weekCount}</strong></div></section>
     ${favoriteTiles ? `<section class="panel full mechanic-favorites"><h2>Favorieten</h2><div class="grid home-grid">${favoriteTiles}</div></section>` : ""}
     ${regularTiles}
+    ${extraTiles}
   </section>`;
 }
 
@@ -20755,6 +21509,90 @@ function scheduleRender(delay = 300) {
   }, delay);
 }
 
+function formatDateTime(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("nl-NL", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function setServerSavePending(action) {
+  ui.serverSave = {
+    ...(ui.serverSave || {}),
+    pending: true,
+    action,
+    status: "pending",
+    message: "Opslaan...",
+  };
+  render();
+}
+
+function setServerSaveSuccess(message = "Wijzigingen succesvol opgeslagen") {
+  const savedAt = new Date().toISOString();
+  ui.serverSave = {
+    ...(ui.serverSave || {}),
+    pending: false,
+    action: "",
+    status: "success",
+    message,
+    lastSavedAt: savedAt,
+  };
+  state.lastCentralDatabaseSyncAt = savedAt;
+  render();
+  setTimeout(() => {
+    if (ui.serverSave?.status === "success" && ui.serverSave?.lastSavedAt === savedAt) {
+      ui.serverSave.status = "";
+      ui.serverSave.message = "";
+      render();
+    }
+  }, 3600);
+}
+
+function setServerSaveError(message = "Wijzigingen konden niet worden opgeslagen op de server.") {
+  ui.serverSave = {
+    ...(ui.serverSave || {}),
+    pending: false,
+    action: "",
+    status: "error",
+    message,
+  };
+  render();
+  setTimeout(() => {
+    if (ui.serverSave?.status === "error") {
+      ui.serverSave.status = "";
+      ui.serverSave.message = "";
+      render();
+    }
+  }, 5000);
+}
+
+function isServerSavePending(action = "") {
+  return Boolean(ui.serverSave?.pending && (!action || ui.serverSave.action === action));
+}
+
+function renderServerSaveButton(action, onclick, label = "Opslaan", variant = "secondary") {
+  const pending = isServerSavePending(action);
+  return `<button class="btn ${variant}" type="button" onclick="${onclick}" ${pending ? "disabled" : ""}>${pending ? "💾 Opslaan..." : escapeHtml(label)}</button>`;
+}
+
+function renderServerSaveToast() {
+  const save = ui.serverSave || {};
+  const lastSavedAt = save.lastSavedAt || state.lastCentralDatabaseSyncAt || "";
+  const toast = save.status === "success"
+    ? `<div class="save-toast save-toast-success"><strong>Wijzigingen succesvol opgeslagen</strong>${lastSavedAt ? `<span>Laatste opgeslagen: ${escapeHtml(formatDateTime(lastSavedAt))}</span>` : ""}</div>`
+    : save.status === "error"
+      ? `<div class="save-toast save-toast-error"><strong>Opslaan mislukt</strong><span>${escapeHtml(save.message || "Wijzigingen konden niet worden opgeslagen op de server.")}</span>${lastSavedAt ? `<span>Laatste opgeslagen: ${escapeHtml(formatDateTime(lastSavedAt))}</span>` : ""}</div>`
+      : "";
+  const pending = save.pending ? `<div class="save-toast save-toast-pending"><strong>Opslaan...</strong>${lastSavedAt ? `<span>Laatste opgeslagen: ${escapeHtml(formatDateTime(lastSavedAt))}</span>` : ""}</div>` : "";
+  const saved = !toast && !pending && lastSavedAt ? `<div class="last-saved-indicator">Laatste opgeslagen: ${escapeHtml(formatDateTime(lastSavedAt))}</div>` : "";
+  return `${toast}${pending}${saved}`;
+}
+
 function captureFocusedControl(root) {
   const element = document.activeElement;
   if (!element || !root?.contains(element)) return null;
@@ -20840,9 +21678,10 @@ function render() {
       </div>
     </div>
     <main class="app-shell">
-      <div class="container">${renderRoute(route)}</div>
+      <div class="container">${renderDatabaseSyncBanner()}${renderRoute(route)}</div>
     </main>
     ${user ? renderBottomNav(route) : ""}
+    ${renderServerSaveToast()}
     <section class="print-report" id="print-report"></section>
   `;
   restoreFocusedControl(appEl, focusedControl);
@@ -20853,13 +21692,28 @@ function render() {
 
 window.addEventListener("hashchange", render);
 window.addEventListener("storage", (event) => {
-  if (event.key !== STORAGE_KEY || !event.newValue) return;
+  if (event.key !== SESSION_STORAGE_KEY) return;
   try {
-    state = normalizeState(JSON.parse(event.newValue));
+    state.session = event.newValue ? JSON.parse(event.newValue) : null;
     render();
   } catch {
-    // Ignore malformed external storage writes.
+    // Ignore malformed session writes.
   }
 });
-render();
+
+function renderDatabaseSyncBanner() {
+  if (centralDatabaseEnabled() && !state.databaseSyncError && !state.databaseMigrationStatus) return "";
+  const message = centralDatabaseEnabled()
+    ? state.databaseSyncError || state.databaseMigrationStatus
+    : "Centrale database is nog niet geconfigureerd. Productiedata wordt niet meer als hoofdopslag in localStorage opgeslagen. Configureer Supabase/PostgreSQL onder Platform Admin -> Systeeminstellingen -> Opslag.";
+  return `<section class="info-box database-sync-banner">${escapeHtml(message || "")}</section>`;
+}
+
+async function bootstrapApp() {
+  applyLocalUiPreferences();
+  await loadStateFromCentralDatabase();
+  render();
+}
+
+bootstrapApp();
 
