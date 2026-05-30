@@ -3,6 +3,88 @@ const STORAGE_KEY = "werkbonsysteem-saas-v14";
 const ORDER_STATUSES = ["Niet besteld", "Besteld", "Ontvangen", "Aangevuld"];
 const DEFAULT_COMPANY_ID = "company-alff-installaties";
 const PLATFORM_COMPANY_ID = "platform";
+const STORAGE_PROVIDERS = {
+  LOCAL: "local",
+  SUPABASE: "supabase",
+  AZURE_BLOB: "azure_blob",
+  ONEDRIVE_GRAPH: "onedrive_graph",
+};
+const PRODUCTION_ENTITY_COLLECTIONS = [
+  "users",
+  "customers",
+  "projects",
+  "workorders",
+  "quotes",
+  "quoteLines",
+  "payments",
+  "invoices",
+  "planningEvents",
+  "appliances",
+  "articles",
+  "garageArticles",
+  "warehouseStock",
+  "warehouseInvoiceImports",
+  "kits",
+  "orderLines",
+  "usages",
+  "vanVehicles",
+  "vanStockItems",
+  "vanStockMovements",
+  "vanStockCounts",
+  "files",
+  "photos",
+  "pdfs",
+  "documents",
+  "emailAccounts",
+  "emailMessages",
+  "emailTemplates",
+  "whatsappAccounts",
+  "whatsappConversations",
+  "whatsappMessages",
+  "notifications",
+  "customerNotes",
+  "maintenanceContracts",
+  "pricing_categories",
+  "hourlyRates",
+  "profitSnapshots",
+  "checklistTemplates",
+  "checklistSettings",
+  "settings",
+  "reports",
+];
+const DEFAULT_STORAGE_CONFIG = {
+  provider: STORAGE_PROVIDERS.LOCAL,
+  pathPattern: "companyId/module/entityId/filename",
+  metadataOnlyInDatabase: true,
+  localDevelopment: true,
+  supabase: { bucket: "werkbonsysteem-files", publicByDefault: false },
+  azureBlob: { container: "werkbonsysteem-files", publicByDefault: false },
+  oneDriveGraph: { driveId: "", rootFolder: "WerkbonSysteem" },
+};
+const DEFAULT_PRODUCTION_CONFIG = {
+  database: {
+    provider: "postgresql",
+    supabaseReady: true,
+    tenantColumn: "companyId",
+    rlsPrepared: true,
+  },
+  backups: {
+    enabled: true,
+    frequency: "daily",
+    retentionDays: 30,
+    provider: "storage_provider",
+  },
+  auditlog: {
+    enabled: true,
+    includeStorageEvents: true,
+    includeDeletes: true,
+  },
+  deletionPolicy: {
+    destructiveResetRole: "platform_admin",
+    companyDataDeleteAllowedForCompanyAdmin: false,
+    softDeleteByDefault: true,
+  },
+};
 const ROLES = {
   MECHANIC: "mechanic",
   COMPANY_ADMIN: "company_admin",
@@ -273,13 +355,38 @@ function createInitialState() {
     emailMessages: [],
     emailTemplates: [],
     emailAuditLogs: [],
+    whatsappAccounts: [],
+    whatsappConversations: [],
+    whatsappMessages: [],
+    whatsappTemplates: [],
+    whatsappAuditLogs: [],
     hourlyRates: [],
     profitSnapshots: [],
     maintenanceContracts: [],
     planningEvents: [],
     notifications: [],
     customerNotes: [],
+    appliances: [],
     customers: [],
+    files: [],
+    fileStorageObjects: [],
+    photos: [],
+    pdfs: [],
+    documents: [],
+    invoices: [],
+    workorders: [],
+    warehouseStock: [],
+    warehouseInvoiceImports: [],
+    checklistTemplates: [],
+    reports: [],
+    platformAuditLogs: [],
+    platformBillingEmails: [],
+    platformBillingPayments: [],
+    platformBillingInvoices: [],
+    auditLogs: [],
+    backupJobs: [],
+    storageConfig: { ...DEFAULT_STORAGE_CONFIG },
+    productionConfig: { ...DEFAULT_PRODUCTION_CONFIG },
     locations: seedLocations,
     settings: {
       company_id: DEFAULT_COMPANY_ID,
@@ -343,6 +450,7 @@ let ui = {
   profitTo: "",
   platformTab: "Overzicht",
 };
+let renderDebounceTimer = null;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -365,6 +473,68 @@ function normalizeState(input) {
     const companyId = record?.company_id || record?.companyId || fallbackCompanyId;
     return { ...record, company_id: companyId, companyId };
   };
+  if (input.platformDataWiped) {
+    const platformUsers = (input.users || [])
+      .filter((user) => normalizeRole(user.role) === ROLES.PLATFORM_ADMIN)
+      .map((user) => ({ ...user, role: ROLES.PLATFORM_ADMIN, company_id: null, companyId: null, active: true, deleted: false }));
+    if (!platformUsers.length) platformUsers.push({ ...seedUsers.find((user) => user.role === ROLES.PLATFORM_ADMIN), company_id: null, companyId: null });
+    return {
+      ...input,
+      platformDataWiped: true,
+      companies: [],
+      kits: [],
+      articles: [],
+      garageArticles: [],
+      projects: [],
+      usages: [],
+      orderLines: [],
+      quotes: [],
+      quoteLines: [],
+      payments: [],
+      pricing_categories: [],
+      emailAccounts: [],
+      emailMessages: [],
+      emailTemplates: [],
+      emailAuditLogs: [],
+      whatsappAccounts: [],
+      whatsappConversations: [],
+      whatsappMessages: [],
+      whatsappTemplates: [],
+      whatsappAuditLogs: [],
+      hourlyRates: [],
+      profitSnapshots: [],
+      maintenanceContracts: [],
+      planningEvents: [],
+      notifications: [],
+      customerNotes: [],
+      appliances: [],
+      customers: [],
+      files: [],
+      fileStorageObjects: [],
+      photos: [],
+      pdfs: [],
+      documents: [],
+      invoices: [],
+      workorders: [],
+      warehouseStock: [],
+      warehouseInvoiceImports: [],
+      checklistTemplates: [],
+      reports: [],
+      auditLogs: [],
+      backupJobs: [],
+      storageConfig: { ...DEFAULT_STORAGE_CONFIG, ...(input.storageConfig || {}) },
+      productionConfig: { ...DEFAULT_PRODUCTION_CONFIG, ...(input.productionConfig || {}) },
+      locations: [],
+      settings: input.settings || {},
+      users: platformUsers,
+      session: input.session || null,
+      platformAuditLogs: input.platformAuditLogs || [],
+      platformBillingEmails: input.platformBillingEmails || [],
+      platformBillingPayments: input.platformBillingPayments || [],
+      platformBillingInvoices: input.platformBillingInvoices || [],
+      platformSettings: input.platformSettings || { platform_name: "WerkbonSysteem.nl", maintenance_mode: false, default_user_limit: 10, default_storage_limit_mb: 1024 },
+    };
+  }
   const existingCompanies = input.companies || [];
   const mergedCompanies = [
     ...existingCompanies.map((company) => {
@@ -408,7 +578,14 @@ function normalizeState(input) {
     normalizedUser.can_create_own_appointments = Boolean(user.can_create_own_appointments);
     normalizedUser.can_create_customers = Boolean(user.can_create_customers || user.can_create_customer_from_call);
     normalizedUser.can_edit_customers = Boolean(user.can_edit_customers);
+    normalizedUser.can_view_workorders = user.can_view_workorders ?? (role === ROLES.COMPANY_ADMIN || role === ROLES.MECHANIC);
+    normalizedUser.can_open_workorders = user.can_open_workorders ?? (role === ROLES.COMPANY_ADMIN || role === ROLES.MECHANIC);
+    normalizedUser.can_create_workorders = user.can_create_workorders ?? (role === ROLES.COMPANY_ADMIN);
+    normalizedUser.can_edit_workorders = user.can_edit_workorders ?? (role === ROLES.COMPANY_ADMIN);
+    normalizedUser.can_delete_workorders = user.can_delete_workorders ?? (role === ROLES.COMPANY_ADMIN);
     normalizedUser.can_close_workorders = user.can_close_workorders !== false;
+    normalizedUser.can_send_workorders_to_customer = user.can_send_workorders_to_customer ?? (role === ROLES.COMPANY_ADMIN);
+    normalizedUser.can_export_workorders_pdf = user.can_export_workorders_pdf ?? (role === ROLES.COMPANY_ADMIN);
     normalizedUser.can_make_quotes = Boolean(user.can_make_quotes);
     normalizedUser.can_register_payments = Boolean(user.can_register_payments);
     normalizedUser.can_manage_inventory = Boolean(user.can_manage_inventory);
@@ -418,6 +595,8 @@ function normalizeState(input) {
     normalizedUser.can_archive_email = Boolean(user.can_archive_email);
     normalizedUser.can_connect_mailbox = Boolean(user.can_connect_mailbox);
     normalizedUser.can_manage_email_templates = Boolean(user.can_manage_email_templates);
+    normalizedUser.can_use_whatsapp = Boolean(user.can_use_whatsapp);
+    normalizedUser.can_reply_whatsapp = Boolean(user.can_reply_whatsapp);
     if (role === ROLES.PLATFORM_ADMIN) {
       normalizedUser.company_id = null;
       normalizedUser.companyId = null;
@@ -450,13 +629,44 @@ function normalizeState(input) {
     emailMessages: input.emailMessages || input.email_messages || [],
     emailTemplates: input.emailTemplates || input.email_templates || [],
     emailAuditLogs: input.emailAuditLogs || input.email_audit_logs || [],
+    whatsappAccounts: input.whatsappAccounts || input.whatsapp_accounts || [],
+    whatsappConversations: input.whatsappConversations || input.whatsapp_conversations || [],
+    whatsappMessages: input.whatsappMessages || input.whatsapp_messages || [],
+    whatsappTemplates: input.whatsappTemplates || input.whatsapp_templates || [],
+    whatsappAuditLogs: input.whatsappAuditLogs || input.whatsapp_audit_logs || [],
     hourlyRates: input.hourlyRates || [],
     profitSnapshots: input.profitSnapshots || [],
     maintenanceContracts: input.maintenanceContracts || [],
     planningEvents: input.planningEvents || [],
     notifications: input.notifications || [],
     customerNotes: input.customerNotes || input.customer_notes || [],
+    appliances: input.appliances || input.customerAppliances || input.customer_appliances || [],
     customers: input.customers || [],
+    files: input.files || input.fileMetadata || input.storageFiles || [],
+    fileStorageObjects: input.fileStorageObjects || input.localFileObjects || [],
+    photos: input.photos || [],
+    pdfs: input.pdfs || [],
+    documents: input.documents || [],
+    invoices: input.invoices || [],
+    workorders: input.workorders || [],
+    warehouseStock: input.warehouseStock || input.warehouse_stock || [],
+    warehouseInvoiceImports: input.warehouseInvoiceImports || input.warehouse_invoice_imports || [],
+    checklistTemplates: input.checklistTemplates || input.checklist_templates || [],
+    reports: input.reports || [],
+    auditLogs: input.auditLogs || input.audit_logs || [],
+    platformBillingEmails: input.platformBillingEmails || input.platform_billing_emails || [],
+    platformBillingPayments: input.platformBillingPayments || input.platform_billing_payments || [],
+    platformBillingInvoices: input.platformBillingInvoices || input.platform_billing_invoices || [],
+    backupJobs: input.backupJobs || input.backup_jobs || [],
+    storageConfig: { ...DEFAULT_STORAGE_CONFIG, ...(input.storageConfig || input.storage_config || {}) },
+    productionConfig: {
+      ...DEFAULT_PRODUCTION_CONFIG,
+      ...(input.productionConfig || input.production_config || {}),
+      database: { ...DEFAULT_PRODUCTION_CONFIG.database, ...((input.productionConfig || input.production_config || {}).database || {}) },
+      backups: { ...DEFAULT_PRODUCTION_CONFIG.backups, ...((input.productionConfig || input.production_config || {}).backups || {}) },
+      auditlog: { ...DEFAULT_PRODUCTION_CONFIG.auditlog, ...((input.productionConfig || input.production_config || {}).auditlog || {}) },
+      deletionPolicy: { ...DEFAULT_PRODUCTION_CONFIG.deletionPolicy, ...((input.productionConfig || input.production_config || {}).deletionPolicy || {}) },
+    },
     locations: mergedLocations,
     users: mergedUsers,
     settings: withCompany(input.settings || {}, DEFAULT_COMPANY_ID),
@@ -483,6 +693,12 @@ function normalizeState(input) {
     push_notifications_enabled: Boolean(normalized.settings.push_notifications_enabled),
     quote_valid_days: Number(normalized.settings.quote_valid_days ?? 30),
     default_hourly_rate_id: normalized.settings.default_hourly_rate_id || "rate-service-monteur",
+    quote_show_company_logo: normalized.settings.quote_show_company_logo !== false,
+    quote_show_kvk: normalized.settings.quote_show_kvk !== false,
+    quote_show_vat_number: normalized.settings.quote_show_vat_number !== false,
+    quote_show_acceptance_block: normalized.settings.quote_show_acceptance_block !== false,
+    quote_include_terms: normalized.settings.quote_include_terms !== false,
+    quote_default_disclaimer: normalized.settings.quote_default_disclaimer || "Op al onze offertes zijn onze algemene voorwaarden van toepassing. Deze offerte is geldig tot de vermelde vervaldatum.",
   };
   normalized.kits = (normalized.kits || seedKits).map((kit) => withCompany(kit));
   normalized.projects = (normalized.projects || []).map((project) => withCompany(project));
@@ -495,6 +711,11 @@ function normalizeState(input) {
   normalized.emailMessages = (normalized.emailMessages || []).map((message) => withCompany(message));
   normalized.emailTemplates = (normalized.emailTemplates || []).map((template) => withCompany(template));
   normalized.emailAuditLogs = (normalized.emailAuditLogs || []).map((log) => withCompany(log));
+  normalized.whatsappAccounts = (normalized.whatsappAccounts || []).map((account) => withCompany(account));
+  normalized.whatsappConversations = (normalized.whatsappConversations || []).map((conversation) => withCompany(conversation));
+  normalized.whatsappMessages = (normalized.whatsappMessages || []).map((message) => withCompany(message));
+  normalized.whatsappTemplates = (normalized.whatsappTemplates || []).map((template) => withCompany(template));
+  normalized.whatsappAuditLogs = (normalized.whatsappAuditLogs || []).map((log) => withCompany(log));
   normalized.hourlyRates = (normalized.hourlyRates || []).map((rate) => withCompany(rate));
   normalized.profitSnapshots = (normalized.profitSnapshots || []).map((snapshot) => withCompany(snapshot));
   normalized.maintenanceContracts = (normalized.maintenanceContracts || []).map((contract) => withCompany(contract));
@@ -520,6 +741,15 @@ function normalizeState(input) {
     source: note.source || "manual",
     follow_up_action: note.follow_up_action || note.followUpAction || "geen",
     created_at: note.created_at || note.createdAt || new Date().toISOString(),
+  }));
+  normalized.appliances = (normalized.appliances || []).map((appliance) => ({
+    ...withCompany(appliance),
+    customer_id: appliance.customer_id || appliance.customerId || "",
+    project_id: appliance.project_id || appliance.projectId || "",
+    workorder_id: appliance.workorder_id || appliance.workorderId || appliance.project_id || appliance.projectId || "",
+    mechanic_id: appliance.mechanic_id || appliance.mechanicId || appliance.assignedMechanicId || "",
+    active: appliance.active !== false,
+    service_history: appliance.service_history || appliance.serviceHistory || [],
   }));
   normalized.customers = (normalized.customers || []).map((customer) => withCompany(customer));
   normalized.adminNotifications = (normalized.adminNotifications || []).map((note) => withCompany(note));
@@ -585,7 +815,48 @@ function normalizeState(input) {
       active: true,
     });
   }
+  normalizeProductionTenantState(normalized);
   return normalized;
+}
+
+function normalizeProductionTenantState(targetState) {
+  const withTenant = (record, fallbackCompanyId = DEFAULT_COMPANY_ID) => {
+    if (!record || typeof record !== "object") return record;
+    const role = record.role || "";
+    const companyId = role === ROLES.PLATFORM_ADMIN ? null : record.companyId || record.company_id || record.companyID || fallbackCompanyId;
+    record.companyId = companyId;
+    record.company_id = companyId;
+    return record;
+  };
+  PRODUCTION_ENTITY_COLLECTIONS.forEach((collection) => {
+    if (Array.isArray(targetState[collection])) {
+      targetState[collection] = targetState[collection].map((record) => withTenant(record));
+    } else if (targetState[collection] && typeof targetState[collection] === "object") {
+      targetState[collection] = withTenant(targetState[collection]);
+    }
+  });
+  (targetState.companies || []).forEach((company) => {
+    company.companyId = company.id || company.companyId || company.company_id;
+    company.company_id = company.companyId;
+    company.modules_enabled = company.modules_enabled || {};
+    company.settings = company.settings || {};
+  });
+  (targetState.projects || []).forEach((project) => {
+    const companyId = recordCompanyId(project);
+    project.companyId = companyId;
+    project.company_id = companyId;
+    if (project.workOrder) withTenant(project.workOrder, companyId);
+    if (project.workorder) withTenant(project.workorder, companyId);
+    if (Array.isArray(project.photos)) project.photos = project.photos.map((photo) => withTenant(photo, companyId));
+    if (project.workOrder?.photos) project.workOrder.photos = project.workOrder.photos.map((photo) => withTenant(photo, companyId));
+  });
+  targetState.files = (targetState.files || []).map(normalizeFileMetadata);
+  targetState.fileStorageObjects = (targetState.fileStorageObjects || []).map((object) => ({
+    ...object,
+    companyId: object.companyId || object.company_id || DEFAULT_COMPANY_ID,
+    company_id: object.company_id || object.companyId || DEFAULT_COMPANY_ID,
+  }));
+  return targetState;
 }
 
 function addDemoData(demoState) {
@@ -674,6 +945,7 @@ function addDemoData(demoState) {
 }
 
 function saveState() {
+  normalizeProductionTenantState(state);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -687,6 +959,165 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || `company-${Date.now()}`;
+}
+
+function storageConfig() {
+  state.storageConfig = {
+    ...DEFAULT_STORAGE_CONFIG,
+    ...(state.storageConfig || {}),
+    supabase: { ...DEFAULT_STORAGE_CONFIG.supabase, ...((state.storageConfig || {}).supabase || {}) },
+    azureBlob: { ...DEFAULT_STORAGE_CONFIG.azureBlob, ...((state.storageConfig || {}).azureBlob || {}) },
+    oneDriveGraph: { ...DEFAULT_STORAGE_CONFIG.oneDriveGraph, ...((state.storageConfig || {}).oneDriveGraph || {}) },
+  };
+  return state.storageConfig;
+}
+
+function productionConfig() {
+  state.productionConfig = {
+    ...DEFAULT_PRODUCTION_CONFIG,
+    ...(state.productionConfig || {}),
+    database: { ...DEFAULT_PRODUCTION_CONFIG.database, ...((state.productionConfig || {}).database || {}) },
+    backups: { ...DEFAULT_PRODUCTION_CONFIG.backups, ...((state.productionConfig || {}).backups || {}) },
+    auditlog: { ...DEFAULT_PRODUCTION_CONFIG.auditlog, ...((state.productionConfig || {}).auditlog || {}) },
+    deletionPolicy: { ...DEFAULT_PRODUCTION_CONFIG.deletionPolicy, ...((state.productionConfig || {}).deletionPolicy || {}) },
+  };
+  return state.productionConfig;
+}
+
+function sanitizeFilename(value) {
+  const clean = String(value || "bestand")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
+  return clean || `bestand-${Date.now()}`;
+}
+
+function storagePathForFile(companyId, module, entityId, filename) {
+  return [companyId || PLATFORM_COMPANY_ID, module || "general", entityId || "unlinked", sanitizeFilename(filename)].join("/");
+}
+
+function inferFileType(filename, mimeType = "") {
+  const type = String(mimeType || "").toLowerCase();
+  if (type.includes("pdf") || String(filename || "").toLowerCase().endsWith(".pdf")) return "pdf";
+  if (type.startsWith("image/") || /\.(png|jpe?g|webp|svg|gif)$/i.test(filename || "")) return "image";
+  if (type.includes("text") || /\.(txt|csv|json)$/i.test(filename || "")) return "text";
+  return "binary";
+}
+
+function normalizeFileMetadata(file) {
+  const companyId = file?.companyId || file?.company_id || DEFAULT_COMPANY_ID;
+  const module = file?.module || file?.module_name || "general";
+  const entityId = file?.entityId || file?.entity_id || file?.workorder_id || file?.project_id || "";
+  const filename = sanitizeFilename(file?.filename || file?.fileName || file?.file_name || file?.name || "bestand");
+  const storagePath = file?.storagePath || file?.storage_path || storagePathForFile(companyId, module, entityId, filename);
+  const createdAt = file?.createdAt || file?.created_at || file?.uploaded_at || new Date().toISOString();
+  const provider = file?.storageProvider || file?.storage_provider || DEFAULT_STORAGE_CONFIG.provider;
+  return {
+    id: file?.id || uid("file"),
+    companyId,
+    company_id: companyId,
+    module,
+    entityId,
+    entity_id: entityId,
+    filename,
+    fileName: filename,
+    file_name: filename,
+    fileType: file?.fileType || file?.file_type || inferFileType(filename, file?.mimeType || file?.mime_type),
+    file_type: file?.file_type || file?.fileType || inferFileType(filename, file?.mimeType || file?.mime_type),
+    mimeType: file?.mimeType || file?.mime_type || "",
+    mime_type: file?.mime_type || file?.mimeType || "",
+    storageProvider: provider,
+    storage_provider: provider,
+    storagePath,
+    storage_path: storagePath,
+    publicUrl: file?.publicUrl || file?.public_url || "",
+    public_url: file?.public_url || file?.publicUrl || "",
+    privateUrl: file?.privateUrl || file?.private_url || "",
+    private_url: file?.private_url || file?.privateUrl || "",
+    uploadedBy: file?.uploadedBy || file?.uploaded_by || "",
+    uploaded_by: file?.uploaded_by || file?.uploadedBy || "",
+    createdAt,
+    created_at: createdAt,
+    deleted: Boolean(file?.deleted),
+    deleted_at: file?.deleted_at || "",
+  };
+}
+
+function registerStorageObject(metadata, dataUrl = "") {
+  if (storageConfig().provider !== STORAGE_PROVIDERS.LOCAL || !dataUrl) return metadata;
+  state.fileStorageObjects = state.fileStorageObjects || [];
+  const existing = state.fileStorageObjects.find((object) => object.fileId === metadata.id || object.storagePath === metadata.storagePath);
+  const object = {
+    id: existing?.id || uid("storage-object"),
+    fileId: metadata.id,
+    companyId: metadata.companyId,
+    company_id: metadata.companyId,
+    storagePath: metadata.storagePath,
+    storage_path: metadata.storagePath,
+    provider: STORAGE_PROVIDERS.LOCAL,
+    data_url: dataUrl,
+    createdAt: existing?.createdAt || metadata.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+  if (existing) Object.assign(existing, object);
+  else state.fileStorageObjects.push(object);
+  metadata.privateUrl = `local://${metadata.storagePath}`;
+  metadata.private_url = metadata.privateUrl;
+  return metadata;
+}
+
+function createFileMetadata({ companyId, module, entityId, filename, mimeType, uploadedBy, dataUrl, publicUrl = "", privateUrl = "" }) {
+  state.files = state.files || [];
+  const metadata = normalizeFileMetadata({
+    companyId,
+    module,
+    entityId,
+    filename,
+    mimeType,
+    uploadedBy,
+    publicUrl,
+    privateUrl,
+    createdAt: new Date().toISOString(),
+    storageProvider: storageConfig().provider,
+  });
+  registerStorageObject(metadata, dataUrl);
+  state.files.push(metadata);
+  return metadata;
+}
+
+function storageDataUrl(fileOrId) {
+  const fileId = typeof fileOrId === "string" ? fileOrId : fileOrId?.id || fileOrId?.storage_file_id || "";
+  const path = typeof fileOrId === "object" ? fileOrId.storagePath || fileOrId.storage_path : "";
+  const object = (state.fileStorageObjects || []).find((item) => item.fileId === fileId || item.storagePath === path || item.storage_path === path);
+  return object?.data_url || "";
+}
+
+function publicOrPrivateFileUrl(fileOrId) {
+  const file = typeof fileOrId === "string" ? (state.files || []).find((item) => item.id === fileOrId) : fileOrId;
+  if (!file) return "";
+  return file.publicUrl || file.public_url || file.privateUrl || file.private_url || storageDataUrl(file);
+}
+
+function auditStorageEvent(action, file) {
+  if (!productionConfig().auditlog.enabled) return;
+  state.auditLogs = state.auditLogs || [];
+  state.auditLogs.push({
+    id: uid("audit"),
+    companyId: file?.companyId || file?.company_id || currentCompanyId() || PLATFORM_COMPANY_ID,
+    company_id: file?.companyId || file?.company_id || currentCompanyId() || PLATFORM_COMPANY_ID,
+    userId: currentUser()?.id || "",
+    user_id: currentUser()?.id || "",
+    role: currentUser()?.role || "",
+    action,
+    entityType: "file",
+    entity_type: "file",
+    entityId: file?.id || "",
+    entity_id: file?.id || "",
+    details: file?.storagePath || file?.storage_path || "",
+    createdAt: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  });
 }
 
 function euro(value) {
@@ -1274,9 +1705,9 @@ function renderProjectList(status) {
             ${isOfficeAdmin() ? `<div class="meta"><span>Kosten</span><strong>${euro(projectTotal(project.id))}</strong></div>` : `<div class="meta"><span>Status</span><strong>${project.status}</strong></div>`}
           </div>
           <div class="button-row">
-            <a class="btn" href="${href}">${status === "Open" ? "Openen" : "Rapport"}</a>
+            ${canOpenWorkorder(project) ? `<a class="btn" href="${href}">${status === "Open" ? "Openen" : "Rapport"}</a>` : `<button class="btn secondary" type="button" onclick="alert('Je hebt geen rechten om deze werkbon te openen.')">Openen</button>`}
             <button class="btn secondary" onclick="exportCsv('${project.id}')">CSV</button>
-            <button class="btn secondary" onclick="exportPdf('${project.id}')">PDF</button>
+            ${hasWorkorderPermission("can_export_workorders_pdf") ? `<button class="btn secondary" onclick="exportPdf('${project.id}')">PDF</button>` : ""}
           </div>
         </article>`;
     })
@@ -1364,7 +1795,7 @@ function renderArticleUsage(usage) {
 
 function setSearch(value) {
   ui.search = value;
-  render();
+  scheduleRender();
 }
 
 function setKitFilter(value) {
@@ -2080,7 +2511,7 @@ function renderProjectTotals(rows) {
 
 function setOrderFilter(field, value) {
   ui[field] = value;
-  render();
+  scheduleRender();
 }
 
 function toggleOrderRow(ids, checked) {
@@ -2231,7 +2662,6 @@ function renderManage() {
         <label>Koffer ID <input name="id" required placeholder="Bijv. M010" /></label>
         <label>Omschrijving <input name="description" required placeholder="Bijv. installatiemateriaal" /></label>
         <button class="btn success" type="submit">Koffer toevoegen</button>
-        <button class="btn warn" type="button" onclick="resetData()">Alle lokale data resetten</button>
       </form>
     </section>
     <section class="panel" style="margin-bottom:14px">
@@ -2273,10 +2703,14 @@ function addKit(event) {
 }
 
 function resetData() {
-  if (!confirm("Weet je zeker dat je alle lokale projecten en wijzigingen wilt verwijderen?")) return;
-  state = createInitialState();
-  saveState();
-  location.hash = "#/home";
+  if (!isPlatformSuperAdmin()) {
+    alert("Geen toegang tot platformbeheer.");
+    return;
+  }
+  ui.platformTab = "Systeembeheer";
+  ui.platformResetStep = 1;
+  ui.platformResetConfirmText = "";
+  location.hash = "#/platform/system-management";
   render();
 }
 
@@ -2357,6 +2791,16 @@ function downloadCsv(rows, filename) {
     .concat(rows.map((row) => headers.map((h) => `"${String(row[h] ?? "").replaceAll('"', '""')}"`).join(";")))
     .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2896,7 +3340,6 @@ function renderManage() {
         <label>Koffer ID <input name="id" required placeholder="Bijv. M010" /></label>
         <label>Omschrijving <input name="description" required placeholder="Bijv. installatiemateriaal" /></label>
         <button class="btn success" type="submit">Koffer toevoegen</button>
-        <button class="btn warn" type="button" onclick="resetData()">Alle lokale data resetten</button>
       </form>
     </section>
     <section class="panel" style="margin-bottom:14px">
@@ -3271,6 +3714,7 @@ function ensureWorkOrder(project) {
   project.workOrder.gasApplianceWork = project.workOrder.gasApplianceWork || "";
   project.workOrder.measurements = project.workOrder.measurements || {};
   project.workOrder.combustion = project.workOrder.combustion || {};
+  project.workOrder.appliance = project.workOrder.appliance || {};
   project.workOrder.installationSafe = project.workOrder.installationSafe || "";
   project.workOrder.unsafeReason = project.workOrder.unsafeReason || "";
   project.workOrder.customerSignature = project.workOrder.customerSignature || "";
@@ -3534,7 +3978,7 @@ function renderWorkOrderForm(project) {
       </div>
       ${validationErrors.length ? `<div class="validation-box">${validationErrors.slice(0, 5).map((error) => `<div>${escapeHtml(error)}</div>`).join("")}${validationErrors.length > 5 ? `<div>+ ${validationErrors.length - 5} extra verplichte punten</div>` : ""}</div>` : `<div class="success-box">Werkbonvelden zijn compleet voor de huidige instellingen.</div>`}
       <div class="form-grid">
-        <label>Zijn er werkzaamheden geweest aan een gastoestel?
+        <label>Heeft u aan een gastoestel gewerkt?
           <select required onchange="setWorkOrderField('${project.id}', 'gasApplianceWork', this.value)">
             <option value="">Kies...</option>
             <option value="ja" ${workOrder.gasApplianceWork === "ja" ? "selected" : ""}>Ja</option>
@@ -3559,6 +4003,7 @@ function renderWorkOrderForm(project) {
           <label>Fotocategorie
             <select id="photo-category-${project.id}">
               <option value="installatie">Installatie</option>
+              <option value="typeplaatje">Typeplaatje</option>
               <option value="voor situatie">Voor situatie</option>
               <option value="na situatie">Na situatie</option>
               <option value="rookgas / veiligheid">Rookgas / veiligheid</option>
@@ -3780,11 +4225,11 @@ function renderPdfBrandHeader(company) {
   </div>`;
 }
 
-function validateLogoFile(file) {
+function validateLogoFile(file, maxMb = 5) {
   if (!file) return "Geen bestand geselecteerd.";
   const allowed = ["image/jpeg", "image/png", "image/svg+xml", "image/webp"];
   if (!allowed.includes(file.type)) return "Logo moet JPG, PNG, SVG of WebP zijn.";
-  if (file.size > 5 * 1024 * 1024) return "Logo mag maximaal 5 MB zijn.";
+  if (file.size > Number(maxMb || 5) * 1024 * 1024) return `Logo mag maximaal ${Number(maxMb || 5)} MB zijn.`;
   return "";
 }
 
@@ -3800,12 +4245,25 @@ function readFileAsDataUrl(file) {
 async function updateCompanyLogo(companyId, file) {
   const company = byId(state.companies || [], companyId);
   if (!company || (!isPlatformSuperAdmin() && strictRecordCompanyId(company) !== currentCompanyId())) return alert("Geen toegang.");
-  const error = validateLogoFile(file);
+  normalizeCompanyBranding(company);
+  const error = validateLogoFile(file, company.max_logo_size_mb || 5);
   if (error) return alert(error);
   const dataUrl = await readFileAsDataUrl(file);
+  const metadata = createFileMetadata({
+    companyId: company.id,
+    module: "company-branding",
+    entityId: company.id,
+    filename: file.name,
+    mimeType: file.type || "image/*",
+    uploadedBy: currentUser()?.id || "",
+    dataUrl,
+  });
   company.logo_data = dataUrl;
   company.logo_url = dataUrl;
+  company.logo_file_id = metadata.id;
+  company.logo_storage_path = metadata.storagePath;
   company.branding_updated_at = new Date().toISOString();
+  auditStorageEvent("company_logo_uploaded", metadata);
   normalizeCompanyBranding(company);
   if (isPlatformSuperAdmin()) logPlatformAction("bedrijfslogo gewijzigd", company.id, company.name);
   saveState();
@@ -3817,6 +4275,8 @@ function removeCompanyLogo(companyId) {
   if (!company || (!isPlatformSuperAdmin() && strictRecordCompanyId(company) !== currentCompanyId())) return alert("Geen toegang.");
   company.logo_data = "";
   company.logo_url = "";
+  company.logo_file_id = "";
+  company.logo_storage_path = "";
   company.branding_updated_at = new Date().toISOString();
   normalizeCompanyBranding(company);
   if (isPlatformSuperAdmin()) logPlatformAction("bedrijfslogo verwijderd", company.id, company.name);
@@ -3897,6 +4357,7 @@ function renderCompanySettings() {
         <div class="meta"><span>Tenant ID</span><strong>${escapeHtml(company.id)}</strong></div>
       </div>
     </section>
+    ${renderCompanyBrandingPanel(company)}
     <section class="panel" style="margin-top:14px">
       <h2>Offerte, winst en planning</h2>
       <div class="form-grid">
@@ -4181,8 +4642,18 @@ function renderWorkorderPdfHtml(data) {
 function exportPdf(projectId) {
   const data = getFullWorkorderExportData(projectId);
   if (!data) return alert("Werkbon exporteren lukt niet: geen toegang of werkbon niet gevonden.");
+  if (!hasWorkorderPermission("can_export_workorders_pdf")) return alert("Je hebt geen rechten om deze werkbon te exporteren.");
   const customer = customerExportFields(data);
   const filename = `werkbon-${workorderNumber(data.project)}-${slugify(customer.name || data.project.customer || "klant")}.pdf`;
+  const metadata = createFileMetadata({
+    companyId: strictRecordCompanyId(data.project),
+    module: "workorders",
+    entityId: data.project.id,
+    filename,
+    mimeType: "application/pdf",
+    uploadedBy: currentUser()?.id || "",
+  });
+  auditStorageEvent("workorder_pdf_exported", metadata);
   document.getElementById("print-report").innerHTML = renderWorkorderPdfHtml(data);
   const previousTitle = document.title;
   document.title = filename;
@@ -4196,47 +4667,236 @@ function workorderMailBody(data) {
   const customer = customerExportFields(data);
   const companyName = data.company?.name || "WerkbonSysteem.nl";
   const date = safeDate(data.project.completedAt || data.project.completed_at || data.project.date || new Date().toISOString());
-  return `Beste ${customer.name || "klant"},\n\nBijgevoegd/onderstaand ontvangt u de werkbon van de uitgevoerde werkzaamheden op ${date}.\n\nMet vriendelijke groet,\n${companyName}`;
+  return `Beste ${customer.name || "klant"},\n\nBijgevoegd/onderstaand ontvangt u de werkbon van de uitgevoerde werkzaamheden op ${date}.\n\n${companyEmailSignature(data.company, companyName)}`;
+}
+
+function workorderEmailFilename(data) {
+  const customer = customerExportFields(data);
+  return `werkbon-${workorderNumber(data.project)}-${slugify(customer.name || data.project.customer || "klant")}.pdf`;
+}
+
+function generateWorkorderPdfAttachment(data) {
+  const html = renderWorkorderPdfHtml(data);
+  const filename = workorderEmailFilename(data);
+  const metadata = createFileMetadata({
+    companyId: strictRecordCompanyId(data.project),
+    module: "workorders",
+    entityId: data.project.id,
+    filename,
+    mimeType: "application/pdf",
+    uploadedBy: currentUser()?.id || "",
+  });
+  return {
+    id: uid("attachment"),
+    type: "workorder_pdf",
+    name: filename,
+    file_name: filename,
+    mime_type: "application/pdf",
+    storage_file_id: metadata.id,
+    storagePath: metadata.storagePath,
+    storage_path: metadata.storagePath,
+    generated_at: new Date().toISOString(),
+    source: "latest_workorder_export",
+    size_label: `${Math.max(1, Math.round(html.length / 1024))} KB`,
+    html,
+  };
+}
+
+function workorderExtraAttachments(data) {
+  const photos = (data.photos || []).map((photo, index) => ({
+    id: `photo-${photo.id || index}`,
+    type: "photo",
+    name: photo.file_name || `werkbon-foto-${index + 1}.jpg`,
+    file_name: photo.file_name || `werkbon-foto-${index + 1}.jpg`,
+    mime_type: "image/*",
+    generated_at: photo.uploaded_at || photo.created_at || new Date().toISOString(),
+    source: "workorder_photo",
+    size_label: "foto",
+    storage_file_id: photo.storage_file_id || "",
+    storagePath: photo.storagePath || photo.storage_path || "",
+    storage_path: photo.storage_path || photo.storagePath || "",
+    data_url: photoSrc(photo),
+  }));
+  const workorder = data.workorder || {};
+  const reports = [
+    ["measurement_report", "Meetrapport", workorder.measurementReportName || ""],
+    ["maintenance_report", "Onderhoudsrapport", workorder.maintenanceReportName || ""],
+  ].filter(([, , name]) => name).map(([type, label, name]) => ({
+    id: `${type}-${data.project.id}`,
+    type,
+    name,
+    file_name: name,
+    mime_type: "application/pdf",
+    generated_at: new Date().toISOString(),
+    source: label,
+    size_label: "rapport",
+  }));
+  return [...photos, ...reports];
+}
+
+function defaultWorkorderEmailBody(data) {
+  const customer = customerExportFields(data);
+  const companyName = data.company?.name || "WerkbonSysteem.nl";
+  return `Beste ${customer.name || "klant"},\n\nIn de bijlage ontvangt u de werkbon van de uitgevoerde werkzaamheden.\n\n${companyEmailSignature(data.company, companyName)}`;
+}
+
+function workorderEmailDraft(projectId) {
+  const data = getFullWorkorderExportData(projectId);
+  if (!data) return null;
+  const customer = customerExportFields(data);
+  const companyName = data.company?.name || "WerkbonSysteem.nl";
+  return {
+    data,
+    to: customer.email || "",
+    subject: `Werkbon ${workorderNumber(data.project)} - ${companyName}`,
+    body: defaultWorkorderEmailBody(data),
+    pdf: generateWorkorderPdfAttachment(data),
+    extras: workorderExtraAttachments(data),
+  };
+}
+
+function selectedWorkorderEmailAttachments(projectId) {
+  const draft = workorderEmailDraft(projectId);
+  if (!draft) return [];
+  const selected = ui.workorderEmailAttachments || {};
+  const extras = draft.extras.filter((attachment) => selected[attachment.id] === true);
+  return [draft.pdf, ...extras];
 }
 
 function mailWorkorderToCustomer(projectId) {
-  const data = getFullWorkorderExportData(projectId);
-  if (!data) return alert("Werkbon mailen lukt niet: geen toegang of werkbon niet gevonden.");
-  const customer = customerExportFields(data);
-  if (!customer.email) return alert("Geen e-mailadres bekend voor deze klant.");
-  const existing = document.getElementById("workorder-mail-dialog");
-  if (existing) existing.remove();
-  const dialog = document.createElement("section");
-  dialog.id = "workorder-mail-dialog";
-  dialog.className = "modal-backdrop";
-  dialog.innerHTML = `<div class="panel confirm-modal">
-    <h2>Werkbon mailen naar klant</h2>
-    <p>Download eerst de PDF en voeg deze daarna handmatig toe als bijlage.</p>
-    <p><strong>Aan:</strong> ${escapeHtml(customer.email)}<br><strong>Werkbon:</strong> ${escapeHtml(workorderNumber(data.project))}</p>
-    <div class="button-row">
-      <button class="btn secondary" type="button" onclick="closeWorkorderMailDialog()">Annuleren</button>
-      <button class="btn success" type="button" onclick="exportPdf('${data.project.id}')">Download PDF</button>
-      <button class="btn secondary" type="button" onclick="openWorkorderMailto('${data.project.id}')">Open e-mail naar klant</button>
-    </div>
-    <p class="muted">Voeg de gedownloade PDF handmatig toe als bijlage.</p>
-  </div>`;
-  document.body.appendChild(dialog);
+  const draft = workorderEmailDraft(projectId);
+  if (!draft) return alert("Werkbon verzenden lukt niet: geen toegang of werkbon niet gevonden.");
+  if (!hasWorkorderPermission("can_send_workorders_to_customer")) return alert("Je hebt geen rechten om deze werkbon naar de klant te versturen.");
+  if (!draft.to) return alert("Geen e-mailadres bekend voor deze klant.");
+  ui.workorderEmailProjectId = projectId;
+  ui.workorderEmailAttachments = {};
+  render();
 }
 
 function closeWorkorderMailDialog() {
-  document.getElementById("workorder-mail-dialog")?.remove();
+  ui.workorderEmailProjectId = "";
+  ui.workorderEmailAttachments = {};
+  render();
 }
 
-function openWorkorderMailto(projectId) {
+function toggleWorkorderEmailAttachment(attachmentId, checked) {
+  ui.workorderEmailAttachments = ui.workorderEmailAttachments || {};
+  ui.workorderEmailAttachments[attachmentId] = Boolean(checked);
+  render();
+}
+
+function previewWorkorderEmailPdf(projectId) {
   const data = getFullWorkorderExportData(projectId);
   if (!data) return;
-  const customer = customerExportFields(data);
-  if (!customer.email) return alert("Geen e-mailadres bekend voor deze klant.");
-  const companyName = data.company?.name || "WerkbonSysteem.nl";
-  const subject = `Werkbon ${workorderNumber(data.project)} - ${companyName}`;
-  const body = `${workorderMailBody(data)}\n\nLet op: voeg de gedownloade PDF handmatig toe als bijlage.`;
-  window.location.href = `mailto:${encodeURIComponent(customer.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  closeWorkorderMailDialog();
+  document.getElementById("print-report").innerHTML = renderWorkorderPdfHtml(data);
+  window.print();
+}
+
+function renderWorkorderEmailDialog() {
+  const projectId = ui.workorderEmailProjectId;
+  if (!projectId) return "";
+  const draft = workorderEmailDraft(projectId);
+  if (!draft) return "";
+  const attachments = selectedWorkorderEmailAttachments(projectId);
+  return `<section class="modal-backdrop"><form class="panel confirm-modal workorder-email-modal" onsubmit="sendWorkorderEmail(event, '${projectId}')">
+    <div class="article-head">
+      <div>
+        <h2>Verzend werkbon</h2>
+        <p>De nieuwste opgeslagen werkbon-PDF is automatisch als bijlage toegevoegd.</p>
+      </div>
+      <button class="btn secondary" type="button" onclick="closeWorkorderMailDialog()">Sluiten</button>
+    </div>
+    <div class="form-grid">
+      <label>Aan <input name="to_email" type="email" required value="${escapeAttr(draft.to)}" /></label>
+      <label>Onderwerp <input name="subject" required value="${escapeAttr(draft.subject)}" /></label>
+      <label class="full">Bericht <textarea name="body" rows="7" required>${escapeHtml(draft.body)}</textarea></label>
+    </div>
+    <section class="email-attachment-panel">
+      <h3>Bijlagen</h3>
+      <div class="email-attachment-row locked">
+        <span>PDF</span>
+        <strong>${escapeHtml(draft.pdf.file_name)}</strong>
+        <small>${escapeHtml(draft.pdf.size_label)} - automatisch gegenereerd</small>
+      </div>
+      ${draft.extras.length ? draft.extras.map((attachment) => `<label class="email-attachment-row">
+        <input type="checkbox" ${ui.workorderEmailAttachments?.[attachment.id] ? "checked" : ""} onchange="toggleWorkorderEmailAttachment('${attachment.id}', this.checked)" />
+        <span>${escapeHtml(attachment.source || attachment.type)}</span>
+        <strong>${escapeHtml(attachment.file_name)}</strong>
+        <small>${escapeHtml(attachment.size_label || "")}</small>
+      </label>`).join("") : `<p class="muted">Geen extra foto's of rapporten gevonden.</p>`}
+    </section>
+    <div class="button-row">
+      <button class="btn success" type="submit">Verzenden zonder voorbeeld</button>
+      <button class="btn secondary" type="button" onclick="previewWorkorderEmailPdf('${projectId}')">Voorbeeld bekijken</button>
+      <button class="btn secondary" type="button" onclick="exportPdf('${projectId}')">PDF downloaden</button>
+      <button class="btn secondary" type="button" onclick="closeWorkorderMailDialog()">Annuleren</button>
+    </div>
+    <input type="hidden" name="attachment_count" value="${attachments.length}" />
+  </form></section>`;
+}
+
+function sendWorkorderEmail(event, projectId) {
+  event.preventDefault();
+  if (!hasWorkorderPermission("can_send_workorders_to_customer")) return alert("Je hebt geen rechten om deze werkbon naar de klant te versturen.");
+  const draft = workorderEmailDraft(projectId);
+  if (!draft) return alert("Werkbon verzenden lukt niet: geen toegang of werkbon niet gevonden.");
+  const form = new FormData(event.target);
+  const now = new Date().toISOString();
+  const attachments = selectedWorkorderEmailAttachments(projectId);
+  const customer = customerExportFields(draft.data);
+  const message = {
+    id: uid("mail"),
+    company_id: strictRecordCompanyId(draft.data.project),
+    companyId: strictRecordCompanyId(draft.data.project),
+    folder: "Verzonden",
+    from_name: currentUser()?.name || "",
+    from_email: currentUser()?.email || "",
+    to_email: String(form.get("to_email") || "").trim(),
+    subject: String(form.get("subject") || "").trim(),
+    body: String(form.get("body") || "").trim(),
+    received_at: now,
+    sent_at: now,
+    is_read: true,
+    has_attachments: true,
+    attachments,
+    customer_id: draft.data.customer?.id || draft.data.project.customer_id || draft.data.project.customerId || "",
+    project_id: draft.data.project.id,
+    workorder_id: draft.data.project.id,
+    workorder_number: workorderNumber(draft.data.project),
+    delivery_status: "verzonden",
+    status: "sent",
+    provider: "portal_email_prepared",
+    created_at: now,
+    updated_at: now,
+  };
+  state.emailMessages = state.emailMessages || [];
+  state.emailMessages.push(message);
+  logEmailAction(message.id, "send_workorder", `Werkbon ${workorderNumber(draft.data.project)} verzonden naar ${message.to_email}. Bijlage: ${attachments.map((attachment) => attachment.file_name).join(", ")}`);
+  state.emailAuditLogs = state.emailAuditLogs || [];
+  state.emailAuditLogs.push({
+    id: uid("mailaudit"),
+    company_id: strictRecordCompanyId(draft.data.project),
+    companyId: strictRecordCompanyId(draft.data.project),
+    message_id: message.id,
+    action: "workorder_sent",
+    details: `Werkbon ${workorderNumber(draft.data.project)} verzonden naar ${message.to_email}. Bijlage: ${attachments.map((attachment) => attachment.file_name).join(", ")}`,
+    user_id: currentUser()?.id || "",
+    sender_name: currentUser()?.name || "",
+    recipient: message.to_email,
+    workorder_number: workorderNumber(draft.data.project),
+    delivery_status: "verzonden",
+    created_at: now,
+  });
+  const workorder = ensureWorkOrder(draft.data.project);
+  workorder.last_email_sent_at = now;
+  workorder.last_email_to = message.to_email;
+  workorder.last_email_status = "verzonden";
+  saveState();
+  ui.workorderEmailProjectId = "";
+  ui.workorderEmailAttachments = {};
+  ui.selectedEmailId = message.id;
+  alert(`Werkbon ${workorderNumber(draft.data.project)} verzonden naar ${message.to_email}.`);
+  render();
 }
 
 function exportQuotePdf(quoteId) {
@@ -4559,7 +5219,7 @@ function materialSearchValue(projectId) {
 function setMaterialSearch(projectId, value) {
   ui.materialSearchByProject = ui.materialSearchByProject || {};
   ui.materialSearchByProject[projectId] = value;
-  render();
+  scheduleRender();
 }
 
 function materialOptions(projectId) {
@@ -4743,23 +5403,28 @@ function validateWorkOrder(project) {
 function renderTechnician(projectId) {
   const project = byId(state.projects, projectId);
   if (!project) return `<div class="panel empty">Project niet gevonden.</div>`;
-  if (!canAccessProject(project)) return `<div class="panel empty">Geen toegang tot dit project.</div>`;
+  if (!canOpenWorkorder(project)) return openWorkorderDeniedMessage();
+  const canEdit = hasWorkorderPermission("can_edit_workorders");
+  const canClose = hasWorkorderPermission("can_close_workorders");
+  const canExport = hasWorkorderPermission("can_export_workorders_pdf");
+  const canSend = hasWorkorderPermission("can_send_workorders_to_customer");
   return `
     <section class="panel" style="margin-bottom:14px">
       <h2>${project.projectName}</h2>
       <p>${project.customer} - ${project.address}<br />${project.technician} - ${project.date}</p>
       ${isMechanic() && project.status === "toegewezen" ? `<button class="btn" onclick="startProject('${project.id}')">Start uitvoering</button>` : ""}
       <div class="button-row">
-        <button class="btn secondary" type="button" onclick="exportPdf('${project.id}')">Export PDF werkbon</button>
-        <button class="btn secondary" type="button" onclick="mailWorkorderToCustomer('${project.id}')">Werkbon mailen naar klant</button>
+        ${canExport ? `<button class="btn secondary" type="button" onclick="exportPdf('${project.id}')">Export PDF werkbon</button>` : ""}
+        ${canSend ? `<button class="btn secondary" type="button" onclick="mailWorkorderToCustomer('${project.id}')">Verzend werkbon</button>` : ""}
       </div>
     </section>
-    ${!isProjectCompleted(project) ? renderWorkOrderForm(project) : renderWorkOrderReadOnly(project)}
-    ${!isProjectCompleted(project) ? renderMaterialSection(project) : renderMaterialReadOnly(project)}
+    ${!isProjectCompleted(project) && canEdit ? renderWorkOrderForm(project) : renderWorkOrderReadOnly(project)}
+    ${!isProjectCompleted(project) && canEdit ? renderMaterialSection(project) : renderMaterialReadOnly(project)}
     <section class="sticky-summary">
       <div><strong>${totalUsed(projectId)} gebruikt</strong><br /><span>${isProjectCompleted(project) ? "Werkbon afgerond" : "Materiaalvraag en werkbon bepalen of je kunt afronden"}</span></div>
-      ${!isProjectCompleted(project) ? `<button class="btn success" onclick="completeProject('${projectId}')">Project afronden</button>` : `<a class="btn success" href="#/summary/${projectId}">Rapport</a>`}
+      ${!isProjectCompleted(project) && canClose ? `<button class="btn success" onclick="completeProject('${projectId}')">Project afronden</button>` : `<a class="btn success" href="#/summary/${projectId}">Rapport</a>`}
     </section>
+    ${renderWorkorderEmailDialog()}
   `;
 }
 
@@ -4775,8 +5440,11 @@ function renderMaterialReadOnly(project) {
 function renderSummary(projectId) {
   const project = byId(state.projects, projectId);
   if (!project) return `<div class="panel empty">Project niet gevonden.</div>`;
-  if (!canAccessProject(project)) return `<div class="panel empty">Geen toegang tot dit project.</div>`;
+  if (!canOpenWorkorder(project)) return openWorkorderDeniedMessage();
   const used = enrichedUsages(projectId).filter((usage) => usage.usedQuantity > 0);
+  const canExport = hasWorkorderPermission("can_export_workorders_pdf");
+  const canSend = hasWorkorderPermission("can_send_workorders_to_customer");
+  const canClose = hasWorkorderPermission("can_close_workorders");
   return `
     <section class="panel" style="margin-bottom:14px">
       <h2>${project.projectName}</h2>
@@ -4788,15 +5456,16 @@ function renderSummary(projectId) {
         <div class="stat-card"><span>Status</span><strong>${project.status}</strong></div>
       </section>
       <div class="button-row">
-        ${!isProjectCompleted(project) ? `<button class="btn success" onclick="completeProject('${projectId}')">Project afronden</button>` : ""}
+        ${!isProjectCompleted(project) && canClose ? `<button class="btn success" onclick="completeProject('${projectId}')">Project afronden</button>` : ""}
         <button class="btn secondary" onclick="exportCsv('${projectId}')">Export CSV</button>
-        <button class="btn secondary" onclick="exportPdf('${projectId}')">Export PDF werkbon</button>
-        <button class="btn secondary" onclick="mailWorkorderToCustomer('${projectId}')">Werkbon mailen naar klant</button>
+        ${canExport ? `<button class="btn secondary" onclick="exportPdf('${projectId}')">Export PDF werkbon</button>` : ""}
+        ${canSend ? `<button class="btn secondary" onclick="mailWorkorderToCustomer('${projectId}')">Verzend werkbon</button>` : ""}
         ${isOfficeAdmin() ? `<a class="btn ghost" href="#/admin">Naar Admin</a>` : `<a class="btn ghost" href="#/start">Terug naar Start</a>`}
       </div>
     </section>
     ${!isProjectCompleted(project) ? renderWorkOrderForm(project) : renderWorkOrderReadOnly(project)}
     ${renderMaterialReadOnly(project)}
+    ${renderWorkorderEmailDialog()}
   `;
 }
 
@@ -4888,7 +5557,7 @@ function toOrderUi(field, fallback = "ALL") {
 
 function setToOrderFilter(field, value) {
   ui[field] = value;
-  render();
+  scheduleRender();
 }
 
 function toOrderDestination(line, article) {
@@ -5277,6 +5946,7 @@ function seedGarageArticles() {
 }
 
 function ensureGarageBoxArticles() {
+  if (state.platformDataWiped) return;
   state.garageArticles = state.garageArticles || [];
   seedGarageArticles().forEach((seed) => {
     if (!state.garageArticles.some((article) => article.id === seed.id || article.supplierArticleNumber === seed.supplierArticleNumber)) {
@@ -5396,6 +6066,7 @@ function renderNewProject() {
 
 function createProject(event) {
   event.preventDefault();
+  if (!hasWorkorderPermission("can_create_workorders")) return alert("Je hebt geen rechten om werkbonnen aan te maken.");
   ensureGarageBoxArticles();
   const form = new FormData(event.target);
   const sourceConfig = sourceChoiceConfig(form.get("sourceChoice") || form.get("kitChoice"));
@@ -5731,6 +6402,389 @@ function addGarageArticle(event) {
   render();
 }
 
+function readFileAsText(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => resolve("");
+    reader.readAsText(file);
+  });
+}
+
+function invoiceNumberFromText(text, fileName = "") {
+  const match = String(text || "").match(/(?:factuur(?:nummer)?|invoice(?:\s*no\.?)?)\D{0,20}([A-Z0-9][A-Z0-9\-\/]{3,})/i);
+  return match?.[1] || String(fileName || "").replace(/\.[^.]+$/, "").slice(0, 40);
+}
+
+function invoiceDateFromText(text) {
+  const match = String(text || "").match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](20\d{2})\b/);
+  if (!match) return "";
+  return `${match[3]}-${String(match[2]).padStart(2, "0")}-${String(match[1]).padStart(2, "0")}`;
+}
+
+function parseInvoiceNumber(value) {
+  const normalized = String(value || "").replace(/[€\s]/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, "").replace(",", ".");
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function splitInvoiceRow(row) {
+  const delimiter = row.includes(";") ? ";" : row.includes("\t") ? "\t" : row.includes(",") ? "," : "";
+  if (!delimiter) return [];
+  const result = [];
+  let current = "";
+  let quoted = false;
+  for (const char of row) {
+    if (char === '"') quoted = !quoted;
+    else if (char === delimiter && !quoted) {
+      result.push(current.trim());
+      current = "";
+    } else current += char;
+  }
+  result.push(current.trim());
+  return result.map((cell) => cell.replace(/^"|"$/g, "").trim());
+}
+
+function invoiceHeaderIndex(headers, names) {
+  const lowered = headers.map((header) => String(header || "").toLowerCase());
+  return lowered.findIndex((header) => names.some((name) => header.includes(name)));
+}
+
+function invoiceLineStatus(line) {
+  if (!line.article_number && !line.article_name) return "unknown";
+  if (!line.article_number) return "unknown";
+  return bySupplierArticleNumber(line.article_number) ? "duplicate" : "new";
+}
+
+function bySupplierArticleNumber(articleNumber) {
+  const value = String(articleNumber || "").trim().toLowerCase();
+  if (!value) return null;
+  return (state.garageArticles || []).find((article) => isSameCompany(article) && String(article.supplierArticleNumber || "").trim().toLowerCase() === value) || null;
+}
+
+function normalizeInvoiceImportLine(line = {}) {
+  const quantity = Math.max(0, parseInvoiceNumber(line.quantity ?? line.aantal ?? 0));
+  const unitPrice = Math.max(0, parseInvoiceNumber(line.unit_price ?? line.price_per_unit ?? line.prijs_per_stuk ?? 0));
+  const total = Math.max(0, parseInvoiceNumber(line.total_price ?? line.totaalprijs ?? (quantity * unitPrice)));
+  const normalized = {
+    id: line.id || uid("invoice-line"),
+    article_name: String(line.article_name || line.description || line.omschrijving || "").trim(),
+    article_number: String(line.article_number || line.supplierArticleNumber || line.artikelnummer || "").trim(),
+    quantity,
+    unit_price: unitPrice || (quantity ? Number((total / quantity).toFixed(2)) : 0),
+    total_price: total,
+    vat_percent: parseInvoiceNumber(line.vat_percent ?? line.btw ?? 21),
+    supplier: String(line.supplier || line.leverancier || "").trim(),
+    status: line.status || "",
+    selected: line.selected !== false,
+    notes: String(line.notes || "").trim(),
+  };
+  normalized.status = normalized.status || invoiceLineStatus(normalized);
+  return normalized;
+}
+
+function parseDelimitedInvoiceRows(lines, supplier, invoiceMeta) {
+  const parsedRows = lines.map(splitInvoiceRow).filter((cells) => cells.length >= 3);
+  if (!parsedRows.length) return { lines: [], unknownLines: lines };
+  const first = parsedRows[0].map((cell) => cell.toLowerCase());
+  const hasHeader = first.some((cell) => ["artikel", "omschrijving", "aantal", "prijs", "btw", "totaal"].some((key) => cell.includes(key)));
+  const headers = hasHeader ? parsedRows[0] : ["artikelnummer", "omschrijving", "aantal", "prijs", "totaal", "btw"];
+  const dataRows = hasHeader ? parsedRows.slice(1) : parsedRows;
+  const numberIndex = invoiceHeaderIndex(headers, ["artikelnummer", "art.nr", "artikel nr", "artnr", "code"]);
+  const nameIndex = invoiceHeaderIndex(headers, ["artikelnaam", "omschrijving", "description", "naam"]);
+  const qtyIndex = invoiceHeaderIndex(headers, ["aantal", "qty", "quantity"]);
+  const unitIndex = invoiceHeaderIndex(headers, ["prijs per stuk", "stukprijs", "eenheidsprijs", "unit", "prijs"]);
+  const totalIndex = invoiceHeaderIndex(headers, ["totaal", "bedrag"]);
+  const vatIndex = invoiceHeaderIndex(headers, ["btw", "vat"]);
+  const unknownLines = [];
+  const invoiceLines = dataRows.map((cells) => {
+    const line = normalizeInvoiceImportLine({
+      article_number: cells[numberIndex >= 0 ? numberIndex : 0] || "",
+      article_name: cells[nameIndex >= 0 ? nameIndex : 1] || cells[0] || "",
+      quantity: cells[qtyIndex >= 0 ? qtyIndex : 2] || 0,
+      unit_price: cells[unitIndex >= 0 ? unitIndex : 3] || 0,
+      total_price: cells[totalIndex >= 0 ? totalIndex : 4] || 0,
+      vat_percent: cells[vatIndex >= 0 ? vatIndex : 5] || 21,
+      supplier,
+    });
+    if (line.status === "unknown") unknownLines.push(cells.join(" | "));
+    return line;
+  }).filter((line) => line.article_name || line.article_number);
+  return { lines: invoiceLines, unknownLines, invoiceMeta };
+}
+
+function parseWascoInvoiceText(text, file) {
+  const supplier = /wasco/i.test(text) || /wasco/i.test(file?.name || "") ? "Wasco" : "";
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const invoiceMeta = {
+    supplier: supplier || "Onbekend",
+    invoice_number: invoiceNumberFromText(text, file?.name || ""),
+    invoice_date: invoiceDateFromText(text),
+  };
+  const delimited = parseDelimitedInvoiceRows(lines, supplier || invoiceMeta.supplier, invoiceMeta);
+  if (delimited.lines.length) return { ...invoiceMeta, lines: delimited.lines, unknownLines: delimited.unknownLines };
+  const unknownLines = [];
+  const parsed = lines.map((line) => {
+    const compact = line.replace(/\s+/g, " ");
+    const match = compact.match(/^([A-Z0-9][A-Z0-9\-\/]{3,})\s+(.+?)\s+(\d+(?:[,.]\d+)?)\s+€?\s*(\d+(?:[,.]\d+)?)\s+€?\s*(\d+(?:[,.]\d+)?)\s*(?:([0-9]{1,2})(?:%|\s*btw)?)?$/i);
+    if (!match) {
+      if (/\d/.test(compact) && compact.length > 12) unknownLines.push(compact);
+      return null;
+    }
+    return normalizeInvoiceImportLine({
+      article_number: match[1],
+      article_name: match[2],
+      quantity: match[3],
+      unit_price: match[4],
+      total_price: match[5],
+      vat_percent: match[6] || 21,
+      supplier: supplier || invoiceMeta.supplier,
+    });
+  }).filter(Boolean);
+  return { ...invoiceMeta, lines: parsed, unknownLines };
+}
+
+function warehouseInvoiceDraft() {
+  ui.warehouseInvoiceImport = ui.warehouseInvoiceImport || null;
+  return ui.warehouseInvoiceImport;
+}
+
+async function uploadWarehouseInvoice(file) {
+  if (!isCompanyAdmin()) return alert("Alleen Company Admin mag facturen importeren.");
+  if (!file) return;
+  const allowed = ["pdf", "jpg", "jpeg", "png", "csv", "xls", "xlsx"];
+  const ext = String(file.name || "").split(".").pop().toLowerCase();
+  if (!allowed.includes(ext)) return alert("Ondersteund: PDF, JPG, PNG, CSV en Excel.");
+  const dataUrl = await readFileAsDataUrl(file);
+  const text = ["csv", "txt", "pdf", "xls", "xlsx"].includes(ext) ? await readFileAsText(file) : "";
+  const metadata = createFileMetadata({
+    companyId: currentCompanyId(),
+    module: "warehouse-invoices",
+    entityId: uid("warehouse-invoice"),
+    filename: file.name,
+    mimeType: file.type || "application/octet-stream",
+    uploadedBy: currentUser()?.id || "",
+    dataUrl,
+  });
+  const parsed = parseWascoInvoiceText(text, file);
+  const now = new Date().toISOString();
+  const document = {
+    id: uid("document"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    module: "warehouse",
+    document_type: "supplier_invoice",
+    supplier: parsed.supplier || (/wasco/i.test(file.name) ? "Wasco" : "Onbekend"),
+    invoice_number: parsed.invoice_number,
+    invoice_date: parsed.invoice_date,
+    file_name: file.name,
+    storage_file_id: metadata.id,
+    storagePath: metadata.storagePath,
+    storage_path: metadata.storagePath,
+    status: "concept_import",
+    uploaded_by: currentUser()?.id || "",
+    created_at: now,
+    updated_at: now,
+  };
+  state.documents = state.documents || [];
+  state.documents.push(document);
+  auditStorageEvent("warehouse_invoice_uploaded", metadata);
+  ui.warehouseInvoiceImport = {
+    id: uid("warehouse-import"),
+    company_id: currentCompanyId(),
+    document_id: document.id,
+    file_name: file.name,
+    supplier: document.supplier,
+    invoice_number: parsed.invoice_number,
+    invoice_date: parsed.invoice_date,
+    lines: parsed.lines.map(normalizeInvoiceImportLine),
+    unknownLines: parsed.unknownLines || [],
+    created_at: now,
+  };
+  saveState();
+  render();
+}
+
+function updateWarehouseImportLine(index, field, value) {
+  const draft = warehouseInvoiceDraft();
+  if (!draft || !draft.lines[index]) return;
+  draft.lines[index][field] = ["quantity", "unit_price", "total_price", "vat_percent"].includes(field) ? parseInvoiceNumber(value) : String(value || "");
+  draft.lines[index] = normalizeInvoiceImportLine(draft.lines[index]);
+  render();
+}
+
+function toggleWarehouseImportLine(index, checked) {
+  const draft = warehouseInvoiceDraft();
+  if (!draft || !draft.lines[index]) return;
+  draft.lines[index].selected = Boolean(checked);
+  render();
+}
+
+function addWarehouseImportLine() {
+  const draft = warehouseInvoiceDraft();
+  if (!draft) return;
+  draft.lines.push(normalizeInvoiceImportLine({ supplier: draft.supplier || "Wasco", quantity: 1, vat_percent: 21 }));
+  render();
+}
+
+function removeWarehouseImportLine(index) {
+  const draft = warehouseInvoiceDraft();
+  if (!draft) return;
+  draft.lines.splice(index, 1);
+  render();
+}
+
+function cancelWarehouseInvoiceImport() {
+  ui.warehouseInvoiceImport = null;
+  render();
+}
+
+function logWarehouseInvoiceImport(importRecord) {
+  state.auditLogs = state.auditLogs || [];
+  state.auditLogs.push({
+    id: uid("audit"),
+    companyId: currentCompanyId(),
+    company_id: currentCompanyId(),
+    userId: currentUser()?.id || "",
+    user_id: currentUser()?.id || "",
+    role: currentUser()?.role || "",
+    action: "warehouse_invoice_imported",
+    entityType: "warehouse_invoice_import",
+    entity_type: "warehouse_invoice_import",
+    entityId: importRecord.id,
+    entity_id: importRecord.id,
+    details: `${importRecord.file_name}: ${importRecord.imported_count} regels geimporteerd`,
+    createdAt: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  });
+}
+
+function importWarehouseInvoiceToStock() {
+  if (!isCompanyAdmin()) return alert("Alleen Company Admin mag facturen importeren.");
+  ensureGarageBoxArticles();
+  const draft = warehouseInvoiceDraft();
+  if (!draft) return;
+  const lines = draft.lines.map(normalizeInvoiceImportLine).filter((line) => line.selected && line.status !== "unknown" && (line.article_number || line.article_name));
+  if (!lines.length) return alert("Geen geldige artikelregels geselecteerd.");
+  const now = new Date().toISOString();
+  const imported = [];
+  lines.forEach((line) => {
+    const existing = bySupplierArticleNumber(line.article_number);
+    if (existing && isSameCompany(existing)) {
+      existing.description = line.article_name || existing.description;
+      existing.currentStock = Number(existing.currentStock || 0) + Number(line.quantity || 0);
+      existing.purchasePrice = Number(line.unit_price || existing.purchasePrice || 0);
+      existing.supplier = line.supplier || existing.supplier || draft.supplier;
+      existing.last_invoice_number = draft.invoice_number || "";
+      existing.updatedAt = now;
+      imported.push({ ...line, article_id: existing.id, action: "stock_increased" });
+    } else {
+      const article = {
+        id: uid("GB"),
+        company_id: currentCompanyId(),
+        companyId: currentCompanyId(),
+        description: line.article_name || line.article_number || "Onbekend artikel",
+        supplierArticleNumber: line.article_number,
+        currentStock: Number(line.quantity || 0),
+        minimumStock: 0,
+        purchasePrice: Number(line.unit_price || 0),
+        active: true,
+        sourceType: "garage_box",
+        sourceName: "Magazijn",
+        supplier: line.supplier || draft.supplier || "Onbekend",
+        last_invoice_number: draft.invoice_number || "",
+        updatedAt: now,
+        orderStatus: "Niet besteld",
+      };
+      state.garageArticles.push(article);
+      imported.push({ ...line, article_id: article.id, action: "created" });
+    }
+  });
+  const record = {
+    id: draft.id,
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    document_id: draft.document_id,
+    file_name: draft.file_name,
+    supplier: draft.supplier,
+    invoice_number: draft.invoice_number,
+    invoice_date: draft.invoice_date,
+    imported_lines: imported,
+    unknown_lines: draft.unknownLines || [],
+    imported_count: imported.length,
+    imported_by: currentUser()?.id || "",
+    imported_at: now,
+  };
+  state.warehouseInvoiceImports = state.warehouseInvoiceImports || [];
+  state.warehouseInvoiceImports.push(record);
+  const document = byId(state.documents || [], draft.document_id);
+  if (document) {
+    document.status = "imported";
+    document.import_id = record.id;
+    document.updated_at = now;
+  }
+  logWarehouseInvoiceImport(record);
+  ui.warehouseInvoiceImport = null;
+  saveState();
+  alert(`${imported.length} artikelregel(s) geimporteerd naar Magazijn.`);
+  render();
+}
+
+function renderWarehouseInvoiceImport() {
+  if (!isCompanyAdmin()) return "";
+  const draft = warehouseInvoiceDraft();
+  const duplicateCount = draft ? draft.lines.filter((line) => normalizeInvoiceImportLine(line).status === "duplicate").length : 0;
+  return `<section class="panel" style="margin-bottom:14px">
+    <div class="article-head">
+      <div>
+        <h2>Artikelen importeren</h2>
+        <p>Importeer artikelregels uit een factuur. Wasco facturen en CSV-regels worden automatisch herkend; controle blijft verplicht.</p>
+      </div>
+      <label class="btn secondary file-button">Importeren uit factuur<input type="file" accept=".pdf,.jpg,.jpeg,.png,.csv,.xls,.xlsx,application/pdf,image/jpeg,image/png,text/csv" onchange="uploadWarehouseInvoice(this.files[0])" /></label>
+    </div>
+    ${draft ? `<div class="subtle-panel" style="margin-top:14px">
+      <div class="meta-grid">
+        <div class="meta"><span>Bestand</span><strong>${escapeHtml(draft.file_name || "-")}</strong></div>
+        <div class="meta"><span>Leverancier</span><strong>${escapeHtml(draft.supplier || "-")}</strong></div>
+        <div class="meta"><span>Factuurnummer</span><strong>${escapeHtml(draft.invoice_number || "-")}</strong></div>
+        <div class="meta"><span>Factuurdatum</span><strong>${escapeHtml(draft.invoice_date || "-")}</strong></div>
+        <div class="meta"><span>Dubbele artikelen</span><strong>${duplicateCount}</strong></div>
+        <div class="meta"><span>Onbekende regels</span><strong>${(draft.unknownLines || []).length}</strong></div>
+      </div>
+      ${duplicateCount ? `<div class="warning">Er zijn bestaande artikelen gevonden op artikelnummer. Bij import wordt de voorraad verhoogd en de prijs per stuk bijgewerkt.</div>` : ""}
+      <div class="table-wrap" style="margin-top:14px"><table>
+        <thead><tr><th>Import</th><th>Status</th><th>Artikelnaam</th><th>Artikelnummer</th><th>Aantal</th><th>Prijs/stuk</th><th>Totaal</th><th>BTW</th><th>Leverancier</th><th></th></tr></thead>
+        <tbody>${draft.lines.map((rawLine, index) => {
+          const line = normalizeInvoiceImportLine(rawLine);
+          const badge = line.status === "duplicate" ? "warn" : line.status === "unknown" ? "danger" : "ok";
+          const label = line.status === "duplicate" ? "Bestaand" : line.status === "unknown" ? "Onbekend" : "Nieuw";
+          return `<tr>
+            <td><input type="checkbox" ${line.selected ? "checked" : ""} onchange="toggleWarehouseImportLine(${index}, this.checked)" /></td>
+            <td><span class="badge ${badge}">${label}</span></td>
+            <td><input value="${escapeAttr(line.article_name)}" onchange="updateWarehouseImportLine(${index}, 'article_name', this.value)" /></td>
+            <td><input value="${escapeAttr(line.article_number)}" onchange="updateWarehouseImportLine(${index}, 'article_number', this.value)" /></td>
+            <td><input type="number" min="0" step="0.01" value="${line.quantity}" onchange="updateWarehouseImportLine(${index}, 'quantity', this.value)" /></td>
+            <td><input type="number" min="0" step="0.01" value="${line.unit_price}" onchange="updateWarehouseImportLine(${index}, 'unit_price', this.value)" /></td>
+            <td><input type="number" min="0" step="0.01" value="${line.total_price}" onchange="updateWarehouseImportLine(${index}, 'total_price', this.value)" /></td>
+            <td><input type="number" min="0" step="0.01" value="${line.vat_percent}" onchange="updateWarehouseImportLine(${index}, 'vat_percent', this.value)" /></td>
+            <td><input value="${escapeAttr(line.supplier || draft.supplier || "")}" onchange="updateWarehouseImportLine(${index}, 'supplier', this.value)" /></td>
+            <td><button class="btn danger" type="button" onclick="removeWarehouseImportLine(${index})">Verwijderen</button></td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table></div>
+      ${(draft.unknownLines || []).length ? `<details class="subtle-panel" style="margin-top:12px"><summary>Onbekende regels controleren</summary>${draft.unknownLines.map((line) => `<p class="muted">${escapeHtml(line)}</p>`).join("")}</details>` : ""}
+      <div class="button-row" style="margin-top:14px">
+        <button class="btn secondary" type="button" onclick="addWarehouseImportLine()">Regel toevoegen</button>
+        <button class="btn success" type="button" onclick="importWarehouseInvoiceToStock()">Importeren naar magazijn</button>
+        <button class="btn ghost" type="button" onclick="cancelWarehouseInvoiceImport()">Annuleren</button>
+      </div>
+    </div>` : `<p class="muted">Ondersteund: PDF, JPG, PNG, CSV en Excel. Bij PDF/afbeelding zonder leesbare tekst blijven regels ter controle handmatig invulbaar.</p>`}
+  </section>`;
+}
+
 function deactivateGarageArticle(articleId) {
   updateGarageArticle(articleId, "active", false);
 }
@@ -5766,6 +6820,7 @@ function renderGarageBox() {
       </form>
       <div class="button-row"><button class="btn secondary" onclick="exportGarageBoxCsv()">Export CSV</button></div>
     </section>
+    ${renderWarehouseInvoiceImport()}
     <div class="table-wrap">
       <table>
         <thead><tr><th>Actief</th><th>Artikelnaam</th><th>Artikelnummer</th><th>Actuele voorraad</th><th>Minimumvoorraad</th><th>Prijs per stuk</th><th>Voorraadwaarde</th><th>Status</th><th>Laatst gewijzigd</th><th>Actie</th></tr></thead>
@@ -6376,13 +7431,37 @@ function renderCompanySettings() {
       </div>
     </section>
     ${renderPaymentQuoteSettings()}
+    ${renderQuoteLayoutSettings()}
     ${renderNotificationSettings()}
     ${renderHourlyRatesSettings()}`;
 }
 
+function renderQuoteLayoutSettings() {
+  const settings = companySettings();
+  const yesNoSetting = (field, label) => `<label>${label}
+    <select onchange="updateCompanySetting('${field}', this.value === 'true')">
+      <option value="true" ${settings[field] ? "selected" : ""}>Ja</option>
+      <option value="false" ${!settings[field] ? "selected" : ""}>Nee</option>
+    </select>
+  </label>`;
+  return `<section class="panel" style="margin-top:14px">
+    <h2>Offertes</h2>
+    <p class="muted">Opmaak en standaardtekst voor offerte-PDF's en offerte-e-mails.</p>
+    <div class="form-grid">
+      ${yesNoSetting("quote_show_company_logo", "Bedrijfslogo tonen")}
+      ${yesNoSetting("quote_show_kvk", "KvK tonen")}
+      ${yesNoSetting("quote_show_vat_number", "BTW nummer tonen")}
+      ${yesNoSetting("quote_show_acceptance_block", "Acceptatieblok tonen")}
+      ${yesNoSetting("quote_include_terms", "Algemene voorwaarden toevoegen")}
+      <label class="full">Disclaimer <textarea rows="4" onchange="updateCompanySetting('quote_default_disclaimer', this.value)">${escapeHtml(settings.quote_default_disclaimer || "")}</textarea></label>
+    </div>
+  </section>`;
+}
+
 function updateCompanySetting(field, value) {
   const numeric = ["default_material_margin_percent", "default_vat_percent", "default_callout_fee", "quote_valid_days", "standaard_btw_percentage", "standaard_voorrijkosten", "standaard_uurtarief"];
-  state.settings[field] = numeric.includes(field) ? Number(value) || 0 : value;
+  const booleanFields = ["quote_show_company_logo", "quote_show_kvk", "quote_show_vat_number", "quote_show_acceptance_block", "quote_include_terms"];
+  state.settings[field] = numeric.includes(field) ? Number(value) || 0 : booleanFields.includes(field) ? Boolean(value) : value;
   saveState();
   render();
 }
@@ -6412,6 +7491,12 @@ function companySettings() {
   state.settings.push_notifications_enabled = Boolean(state.settings.push_notifications_enabled);
   state.settings.quote_valid_days = Number(state.settings.quote_valid_days ?? 30);
   state.settings.default_hourly_rate_id = state.settings.default_hourly_rate_id || "rate-service-monteur";
+  state.settings.quote_show_company_logo = state.settings.quote_show_company_logo !== false;
+  state.settings.quote_show_kvk = state.settings.quote_show_kvk !== false;
+  state.settings.quote_show_vat_number = state.settings.quote_show_vat_number !== false;
+  state.settings.quote_show_acceptance_block = state.settings.quote_show_acceptance_block !== false;
+  state.settings.quote_include_terms = state.settings.quote_include_terms !== false;
+  state.settings.quote_default_disclaimer = state.settings.quote_default_disclaimer || "Op al onze offertes zijn onze algemene voorwaarden van toepassing. Deze offerte is geldig tot de vermelde vervaldatum.";
   return state.settings;
 }
 
@@ -6429,6 +7514,146 @@ function quoteNumber() {
   const year = new Date().getFullYear();
   const count = companyScoped(state.quotes || []).filter((quote) => String(quote.quote_number || "").startsWith(`OFF-${year}-`)).length + 1;
   return `OFF-${year}-${String(count).padStart(4, "0")}`;
+}
+
+function canManageQuotes(user = currentUser()) {
+  if (!user) return false;
+  if (isPlatformSuperAdmin()) return true;
+  if (!isCompanyModuleActive("quotes", currentCompanyId())) return false;
+  if (userRole(user) === ROLES.COMPANY_ADMIN) return true;
+  return permissionValue(user, "can_create_quotes") || permissionValue(user, "can_make_quotes");
+}
+
+function defaultQuoteLine() {
+  const settings = companySettings();
+  const hourly = Number(settings.standaard_uurtarief ?? settings.default_hourly_rate ?? defaultHourlyRate().sell_rate ?? 85);
+  const vat = Number(settings.standaard_btw_percentage ?? settings.default_vat_percent ?? 21);
+  return {
+    id: uid("quote-line"),
+    type: "custom",
+    description: "",
+    quantity: 1,
+    unit: "stuk",
+    material_price: 0,
+    work_hours: 0,
+    hourly_rate: hourly,
+    vat_percent: vat,
+    cost_price: 0,
+  };
+}
+
+function defaultQuoteLines() {
+  const settings = companySettings();
+  const lines = [defaultQuoteLine()];
+  const callout = Number(settings.standaard_voorrijkosten ?? settings.default_callout_fee ?? 0);
+  if (callout > 0) {
+    lines.push({
+      ...defaultQuoteLine(),
+      id: uid("quote-line"),
+      description: "Voorrijkosten",
+      quantity: 1,
+      unit: "rit",
+      material_price: callout,
+      work_hours: 0,
+      hourly_rate: 0,
+    });
+  }
+  return lines;
+}
+
+function quoteDraftFromQuote(quote) {
+  if (!quote) return {
+    id: "new",
+    customer_id: "",
+    customer_name: "",
+    address: "",
+    project_id: "",
+    workorder_id: "",
+    valid_until: addDaysIso(new Date().toISOString(), Number(companySettings().quote_valid_days || 30)),
+    status: "concept",
+    intro_text: "Naar aanleiding van uw aanvraag ontvangt u hierbij onze offerte.",
+    terms_text: "Deze offerte is vrijblijvend en geldig binnen de vermelde termijn.",
+    lines: defaultQuoteLines(),
+  };
+  return {
+    ...quote,
+    lines: (state.quoteLines || []).filter((line) => line.quote_id === quote.id).map((line) => ({
+      id: line.id,
+      description: line.description || "",
+      quantity: Number(line.quantity || 1),
+      unit: line.unit || "stuk",
+      material_price: Number(line.material_price ?? line.sell_price ?? 0),
+      work_hours: Number(line.work_hours || 0),
+      hourly_rate: Number(line.hourly_rate || 0),
+      vat_percent: Number(line.vat_percent || companySettings().default_vat_percent || 21),
+      cost_price: Number(line.cost_price || 0),
+    })).concat([]),
+  };
+}
+
+function addDaysIso(dateValue, days) {
+  const date = new Date(dateValue || new Date().toISOString());
+  date.setDate(date.getDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+function openQuoteEditor(quoteId = "new") {
+  const quote = quoteId === "new" ? null : byId(state.quotes || [], quoteId);
+  if (quote && !isSameCompany(quote)) return alert("Geen toegang.");
+  if (!canManageQuotes()) return alert("Je hebt geen rechten om offertes te maken.");
+  ui.editingQuoteId = quoteId;
+  ui.quoteDraft = quoteDraftFromQuote(quote);
+  render();
+}
+
+function closeQuoteEditor() {
+  ui.editingQuoteId = "";
+  ui.quoteDraft = null;
+  render();
+}
+
+function addQuoteDraftLine() {
+  ui.quoteDraft = ui.quoteDraft || quoteDraftFromQuote(null);
+  ui.quoteDraft.lines = ui.quoteDraft.lines || [];
+  ui.quoteDraft.lines.push(defaultQuoteLine());
+  render();
+}
+
+function removeQuoteDraftLine(index) {
+  ui.quoteDraft = ui.quoteDraft || quoteDraftFromQuote(null);
+  ui.quoteDraft.lines.splice(index, 1);
+  if (!ui.quoteDraft.lines.length) ui.quoteDraft.lines.push(defaultQuoteLine());
+  render();
+}
+
+function quoteLineFinancials(line) {
+  const quantity = Number(line.quantity || 0);
+  const material = Number(line.material_price || 0) * quantity;
+  const labor = Number(line.work_hours || 0) * Number(line.hourly_rate || 0);
+  const subtotal = Math.max(0, material + labor);
+  const vat = subtotal * (Number(line.vat_percent || 0) / 100);
+  const cost = Number(line.cost_price || 0) * quantity;
+  const gross = subtotal - cost;
+  return {
+    subtotal,
+    vat,
+    total: subtotal + vat,
+    cost,
+    gross,
+    margin: subtotal ? Math.round((gross / subtotal) * 10000) / 100 : 0,
+  };
+}
+
+function quoteTotals(lines) {
+  return lines.reduce((total, line) => {
+    const calc = quoteLineFinancials(line);
+    total.subtotal += calc.subtotal;
+    total.vat += calc.vat;
+    total.total += calc.total;
+    total.cost += calc.cost;
+    total.gross += calc.gross;
+    return total;
+  }, { subtotal: 0, vat: 0, total: 0, cost: 0, gross: 0 });
 }
 
 function contractNumber() {
@@ -6873,7 +8098,7 @@ function renderCustomers() {
         <div><h2>Klanten</h2><p>Beheer klanten binnen ${escapeHtml(currentCompany()?.name || "eigen bedrijf")}.</p></div>
         <button class="btn success" type="button" onclick="openCustomerEdit('new')">Klant toevoegen</button>
       </div>
-      <label>Zoeken <input value="${escapeAttr(ui.customerSearch || "")}" oninput="ui.customerSearch=this.value; render()" placeholder="Zoek klant, plaats, telefoon of e-mail" /></label>
+      <label>Zoeken <input value="${escapeAttr(ui.customerSearch || "")}" oninput="setCustomerSearch(this.value)" placeholder="Zoek klant, plaats, telefoon of e-mail" /></label>
     </section>
     <div class="table-wrap"><table><thead><tr><th>Actief</th><th>Klant</th><th>Contactpersoon</th><th>Adres</th><th>Postcode</th><th>Plaats</th><th>Telefoon</th><th>E-mail</th><th>Actie</th></tr></thead><tbody>${rows.map((customer) => `<tr><td><input type="checkbox" ${customer.active !== false ? "checked" : ""} onchange="updateCustomer('${customer.id}', 'active', this.checked)" /></td><td>${escapeHtml(customer.customer_name)}</td><td>${escapeHtml(customer.contact_person || "-")}</td><td>${escapeHtml(customer.address || "-")}</td><td>${escapeHtml(customer.postal_code || "-")}</td><td>${escapeHtml(customer.city || "-")}</td><td>${escapeHtml(customer.phone || "-")}</td><td>${escapeHtml(customer.email || "-")}</td><td><div class="button-row" style="margin-top:0"><button class="btn secondary" type="button" onclick="openCustomerEdit('${customer.id}')">Bewerken</button><button class="btn warn" type="button" onclick="updateCustomer('${customer.id}', 'active', ${customer.active === false ? "true" : "false"})">${customer.active === false ? "Activeren" : "Deactiveren"}</button><button class="btn danger" type="button" onclick="deleteCustomer('${customer.id}')">Verwijderen</button></div></td></tr>`).join("")}</tbody></table></div>
     ${ui.editingCustomerId ? renderCustomerModal(ui.editingCustomerId) : ""}
@@ -6887,42 +8112,309 @@ function openCustomerEdit(customerId) {
 
 function closeCustomerEdit() {
   ui.editingCustomerId = null;
+  ui.customerAppliancePhotoData = null;
   render();
+}
+
+function postcodeCityGuess(postalCode) {
+  const digits = String(postalCode || "").replace(/\D/g, "").slice(0, 2);
+  const map = {
+    "10": "Amsterdam",
+    "11": "Amsterdam",
+    "12": "Hilversum",
+    "13": "Almere",
+    "14": "Bussum",
+    "15": "Zaandam",
+    "16": "Hoorn",
+    "17": "Schagen",
+    "18": "Alkmaar",
+    "19": "Castricum",
+    "20": "Haarlem",
+    "21": "Hoofddorp",
+    "22": "Noordwijk",
+    "23": "Leiden",
+    "24": "Alphen aan den Rijn",
+    "25": "Den Haag",
+    "26": "Delft",
+    "27": "Zoetermeer",
+    "28": "Gouda",
+    "29": "Capelle aan den IJssel",
+    "30": "Rotterdam",
+    "31": "Schiedam",
+    "32": "Spijkenisse",
+    "33": "Dordrecht",
+    "34": "Woerden",
+    "35": "Utrecht",
+    "36": "Maarssen",
+    "37": "Zeist",
+    "38": "Amersfoort",
+    "39": "Veenendaal",
+    "40": "Tiel",
+    "50": "Tilburg",
+    "51": "Waalwijk",
+    "52": "Den Bosch",
+    "53": "Oss",
+    "54": "Uden",
+    "56": "Eindhoven",
+    "57": "Helmond",
+    "58": "Venray",
+    "59": "Venlo",
+    "60": "Roermond",
+    "61": "Sittard",
+    "62": "Maastricht",
+    "63": "Heerlen",
+    "65": "Nijmegen",
+    "67": "Ede",
+    "68": "Arnhem",
+    "70": "Doetinchem",
+    "73": "Apeldoorn",
+    "74": "Deventer",
+    "75": "Enschede",
+    "80": "Zwolle",
+    "82": "Lelystad",
+    "83": "Emmeloord",
+    "84": "Heerenveen",
+    "89": "Leeuwarden",
+    "90": "Dokkum",
+    "94": "Assen",
+    "97": "Groningen",
+  };
+  return map[digits] || "";
+}
+
+function approximateGeoFromAddress(postalCode, houseNumber) {
+  const source = `${postalCode || ""}${houseNumber || ""}`;
+  const seed = source.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return {
+    lat: Number((50.75 + (seed % 330) / 100).toFixed(6)),
+    lng: Number((3.35 + (seed % 390) / 100).toFixed(6)),
+    precision: "postcode_house_number_estimate",
+  };
+}
+
+function setCustomerFormValue(id, value) {
+  const el = document.getElementById(id);
+  if (el && !el.value) el.value = value || "";
+}
+
+function setCustomerFormHidden(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = value ?? "";
+}
+
+function autofillCustomerAddress() {
+  const postcode = document.getElementById("customer-postal-code")?.value || "";
+  const houseNumber = document.getElementById("customer-house-number")?.value || "";
+  if (!postcode || !houseNumber) return;
+  const query = `${postcode} ${houseNumber}, Nederland`;
+  if (window.google?.maps?.Geocoder) {
+    const geocoder = new window.google.maps.Geocoder();
+    geocoder.geocode({ address: query }, (results, status) => {
+      if (status !== "OK" || !results?.[0]) return;
+      const result = results[0];
+      const component = (type) => result.address_components?.find((item) => item.types.includes(type))?.long_name || "";
+      setCustomerFormValue("customer-address", component("route"));
+      setCustomerFormValue("customer-city", component("locality") || component("postal_town") || component("administrative_area_level_2"));
+      setCustomerFormHidden("customer-lat", result.geometry?.location?.lat?.());
+      setCustomerFormHidden("customer-lng", result.geometry?.location?.lng?.());
+      setCustomerFormHidden("customer-geocode-provider", "google_geocoding_api");
+    });
+    return;
+  }
+  setCustomerFormValue("customer-city", postcodeCityGuess(postcode));
+  const geo = approximateGeoFromAddress(postcode, houseNumber);
+  setCustomerFormHidden("customer-lat", geo.lat);
+  setCustomerFormHidden("customer-lng", geo.lng);
+  setCustomerFormHidden("customer-geocode-provider", geo.precision);
+}
+
+async function readCustomerTypeplatePhoto(input) {
+  const file = input?.files?.[0];
+  if (!file) {
+    ui.customerAppliancePhotoData = null;
+    return;
+  }
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const companyId = currentCompanyId() || DEFAULT_COMPANY_ID;
+    const entityId = ui.editingCustomerId && ui.editingCustomerId !== "new" ? ui.editingCustomerId : "new-customer";
+    const metadata = createFileMetadata({
+      companyId,
+      module: "appliances",
+      entityId,
+      filename: file.name,
+      mimeType: file.type || "image/*",
+      uploadedBy: currentUser()?.id || "",
+      dataUrl,
+    });
+    auditStorageEvent("typeplate_photo_uploaded", metadata);
+    ui.customerAppliancePhotoData = {
+      file_name: file.name,
+      storage_file_id: metadata.id,
+      storagePath: metadata.storagePath,
+      storage_path: metadata.storagePath,
+      data_url: dataUrl,
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: currentUser()?.id || "",
+    };
+    render();
+  } catch {
+    alert("Foto typeplaatje uploaden is mislukt.");
+  };
 }
 
 function renderCustomerModal(customerId) {
   const isNew = customerId === "new";
   const customer = isNew ? {} : byId(state.customers || [], customerId);
   if (!isNew && (!customer || !isSameCompany(customer))) return "";
-  return `<section class="modal-backdrop"><form class="panel confirm-modal" onsubmit="saveCustomer(event, '${customerId}')"><h2>${isNew ? "Klant toevoegen" : "Klant bewerken"}</h2><div class="form-grid"><label>Klantnaam <input name="customer_name" required value="${escapeAttr(customer.customer_name || "")}" /></label><label>Contactpersoon <input name="contact_person" value="${escapeAttr(customer.contact_person || "")}" /></label><label>Adres <input name="address" required value="${escapeAttr(customer.address || "")}" /></label><label>Postcode <input name="postal_code" value="${escapeAttr(customer.postal_code || "")}" /></label><label>Plaats <input name="city" value="${escapeAttr(customer.city || "")}" /></label><label>Telefoon <input name="phone" value="${escapeAttr(customer.phone || "")}" /></label><label>E-mail <input name="email" type="email" value="${escapeAttr(customer.email || "")}" /></label><label>Notities <input name="notes" value="${escapeAttr(customer.notes || "")}" /></label></div><div class="button-row"><button class="btn secondary" type="button" onclick="closeCustomerEdit()">Annuleren</button><button class="btn success" type="submit">Opslaan</button></div></form></section>`;
+  const appliance = customerAppliances(customer)[0] || {};
+  const photo = ui.customerAppliancePhotoData || appliance.typeplate_photo || null;
+  return `<section class="modal-backdrop"><form class="panel confirm-modal customer-form-modal" onsubmit="saveCustomer(event, '${customerId}')">
+    <h2>${isNew ? "Klant toevoegen" : "Klant bewerken"}</h2>
+    <p class="muted">Alleen klantnaam, postcode en huisnummer zijn verplicht. Toestelgegevens kunnen later worden aangevuld.</p>
+    <input type="hidden" id="customer-lat" name="lat" value="${escapeAttr(customer.lat || customer.latitude || "")}" />
+    <input type="hidden" id="customer-lng" name="lng" value="${escapeAttr(customer.lng || customer.longitude || "")}" />
+    <input type="hidden" id="customer-geocode-provider" name="geocode_provider" value="${escapeAttr(customer.geocode_provider || "")}" />
+    <section class="user-permission-section">
+      <h4>Basisgegevens</h4>
+      <div class="form-grid">
+        <label>Klantnaam * <input name="customer_name" required value="${escapeAttr(customer.customer_name || "")}" /></label>
+        <label>Postcode * <input id="customer-postal-code" name="postal_code" required value="${escapeAttr(customer.postal_code || "")}" onblur="autofillCustomerAddress()" /></label>
+        <label>Huisnummer * <input id="customer-house-number" name="house_number" required value="${escapeAttr(customer.house_number || "")}" onblur="autofillCustomerAddress()" /></label>
+        <label>Contactpersoon <input name="contact_person" value="${escapeAttr(customer.contact_person || "")}" /></label>
+        <label>Telefoon <input name="phone" value="${escapeAttr(customer.phone || "")}" /></label>
+        <label>E-mail <input name="email" type="email" value="${escapeAttr(customer.email || "")}" /></label>
+        <label>Adres <input id="customer-address" name="address" value="${escapeAttr(customer.address || "")}" /></label>
+        <label>Plaats <input id="customer-city" name="city" value="${escapeAttr(customer.city || "")}" /></label>
+        <label class="full">Notities <textarea name="notes" rows="3">${escapeHtml(customer.notes || "")}</textarea></label>
+      </div>
+      <button class="btn secondary" type="button" onclick="autofillCustomerAddress()">Adres ophalen</button>
+    </section>
+    <section class="user-permission-section">
+      <h4>Toestelgegevens</h4>
+      <div class="form-grid">
+        <label>CV-ketel merk <input name="appliance_brand" value="${escapeAttr(appliance.brand || "")}" /></label>
+        <label>CV-ketel type <input name="appliance_model" value="${escapeAttr(appliance.model || "")}" /></label>
+        <label>Serienummer <input name="serial_number" value="${escapeAttr(appliance.serial_number || "")}" /></label>
+        <label>Bouwjaar <input name="build_year" type="number" min="1950" max="2100" value="${escapeAttr(appliance.build_year || "")}" /></label>
+        <label>Laatste onderhoudsdatum <input name="last_service_date" type="date" value="${escapeAttr(appliance.last_service_date || customer.last_maintenance_date || "")}" /></label>
+        <label>Onderhoudsinterval <input name="maintenance_interval_months" type="number" min="1" value="${escapeAttr(customer.maintenance_interval_months || appliance.maintenance_interval_months || 12)}" /></label>
+        <label>Volgende onderhoudsdatum <input name="next_maintenance_date" type="date" value="${escapeAttr(customer.next_maintenance_date || appliance.next_service_date || "")}" /></label>
+        <label>Type toestel <select name="appliance_category"><option value="">Kies...</option>${applianceCategories().map((category) => `<option value="${category}" ${appliance.category === category ? "selected" : ""}>${category}</option>`).join("")}</select></label>
+        <label>Foto typeplaatje <input name="typeplate_photo" type="file" accept="image/*" onchange="readCustomerTypeplatePhoto(this)" /></label>
+      </div>
+      ${photo ? `<div class="photo-row"><img src="${escapeAttr(photo.data_url || storageDataUrl(photo.storage_file_id) || photo.url || "")}" alt="Foto typeplaatje" /><span>${escapeHtml(photo.file_name || "typeplaatje")}</span></div>` : `<p class="muted">Foto typeplaatje is optioneel.</p>`}
+    </section>
+    <div class="button-row"><button class="btn secondary" type="button" onclick="closeCustomerEdit()">Annuleren</button><button class="btn success" type="submit">Opslaan</button></div>
+  </form></section>`;
 }
 
 function saveCustomer(event, customerId) {
   event.preventDefault();
   const form = new FormData(event.target);
   const now = new Date().toISOString();
+  const postcode = String(form.get("postal_code") || "").trim();
+  const houseNumber = String(form.get("house_number") || "").trim();
+  const geo = form.get("lat") && form.get("lng") ? { lat: Number(form.get("lat")), lng: Number(form.get("lng")), precision: String(form.get("geocode_provider") || "manual") } : approximateGeoFromAddress(postcode, houseNumber);
   const data = {
     customer_name: String(form.get("customer_name") || "").trim(),
     contact_person: String(form.get("contact_person") || "").trim(),
+    house_number: houseNumber,
     address: String(form.get("address") || "").trim(),
-    postal_code: String(form.get("postal_code") || "").trim(),
+    postal_code: postcode,
     city: String(form.get("city") || "").trim(),
     phone: String(form.get("phone") || "").trim(),
     email: String(form.get("email") || "").trim(),
     notes: String(form.get("notes") || "").trim(),
+    lat: geo.lat,
+    lng: geo.lng,
+    latitude: geo.lat,
+    longitude: geo.lng,
+    geocode_provider: geo.precision,
+    map_location_saved: Boolean(geo.lat && geo.lng),
+    maintenance_interval_months: Math.max(1, Number(form.get("maintenance_interval_months") || 12)),
+    next_maintenance_date: String(form.get("next_maintenance_date") || "").trim(),
+    last_maintenance_date: String(form.get("last_service_date") || "").trim(),
     updated_at: now,
   };
-  if (!data.customer_name || !data.address) return alert("Klantnaam en adres zijn verplicht.");
+  if (!data.customer_name || !data.postal_code || !data.house_number) return alert("Klantnaam, postcode en huisnummer zijn verplicht.");
+  let customer;
   if (customerId === "new") {
-    state.customers.push({ id: uid("customer"), company_id: currentCompanyId(), companyId: currentCompanyId(), ...data, source: "admin", created_by: currentUser()?.id || "", active: true, created_at: now });
+    customer = { id: uid("customer"), company_id: currentCompanyId(), companyId: currentCompanyId(), ...data, source: "admin", created_by: currentUser()?.id || "", active: true, created_at: now };
+    state.customers.push(customer);
   } else {
-    const customer = byId(state.customers || [], customerId);
+    customer = byId(state.customers || [], customerId);
     if (!customer || !isSameCompany(customer)) return;
     Object.assign(customer, data);
   }
+  saveCustomerApplianceFromForm(customer, form, now);
   ui.editingCustomerId = null;
+  ui.customerAppliancePhotoData = null;
   saveState();
   render();
+}
+
+function saveCustomerApplianceFromForm(customer, form, now = new Date().toISOString()) {
+  const applianceData = {
+    brand: String(form.get("appliance_brand") || "").trim(),
+    model: String(form.get("appliance_model") || "").trim(),
+    serial_number: String(form.get("serial_number") || "").trim(),
+    build_year: String(form.get("build_year") || "").trim(),
+    category: String(form.get("appliance_category") || "").trim(),
+    last_service_date: String(form.get("last_service_date") || "").trim(),
+    service_date: String(form.get("last_service_date") || "").trim(),
+    maintenance_interval_months: Math.max(1, Number(form.get("maintenance_interval_months") || customer.maintenance_interval_months || 12)),
+    next_service_date: String(form.get("next_maintenance_date") || "").trim(),
+    typeplate_photo: ui.customerAppliancePhotoData || null,
+  };
+  const hasApplianceData = Object.entries(applianceData).some(([key, value]) => key !== "maintenance_interval_months" && Boolean(value));
+  if (!hasApplianceData) return null;
+  state.appliances = state.appliances || [];
+  const companyId = strictRecordCompanyId(customer);
+  const existing = state.appliances.find((row) =>
+    strictRecordCompanyId(row) === companyId &&
+    row.customer_id === customer.id &&
+    ((applianceData.serial_number && row.serial_number === applianceData.serial_number) || (!applianceData.serial_number && row.brand === applianceData.brand && row.model === applianceData.model))
+  );
+  const appliance = existing || {
+    id: uid("appliance"),
+    company_id: companyId,
+    companyId: companyId,
+    customer_id: customer.id,
+    active: true,
+    service_history: [],
+    created_at: now,
+  };
+  Object.assign(appliance, applianceData, {
+    customer_name: customer.customer_name,
+    address: customer.address,
+    house_number: customer.house_number,
+    postal_code: customer.postal_code,
+    city: customer.city,
+    lat: customer.lat,
+    lng: customer.lng,
+    updated_at: now,
+  });
+  if (!existing) state.appliances.push(appliance);
+  customer.appliances = customer.appliances || [];
+  const summary = {
+    id: appliance.id,
+    brand: appliance.brand,
+    model: appliance.model,
+    serial_number: appliance.serial_number,
+    build_year: appliance.build_year,
+    category: appliance.category,
+    address: appliance.address,
+    postal_code: appliance.postal_code,
+    city: appliance.city,
+    last_service_date: appliance.last_service_date,
+    next_service_date: appliance.next_service_date,
+    typeplate_photo: appliance.typeplate_photo,
+  };
+  const idx = customer.appliances.findIndex((item) => item.id === appliance.id);
+  if (idx >= 0) customer.appliances[idx] = summary;
+  else customer.appliances.push(summary);
+  return appliance;
 }
 
 function updateCustomer(customerId, field, value) {
@@ -6952,13 +8444,18 @@ function deleteCustomer(customerId) {
 
 function renderQuotes() {
   const rows = companyScoped(state.quotes || []);
-  return `<section class="stats" style="margin-bottom:14px"><div class="stat-card"><span>Open offertes</span><strong>${rows.filter((q) => ["concept", "gecontroleerd", "verzonden"].includes(q.status)).length}</strong></div><div class="stat-card"><span>Geaccepteerd</span><strong>${rows.filter((q) => q.status === "geaccepteerd").length}</strong></div><div class="stat-card"><span>Offertewaarde</span><strong>${euro(rows.reduce((s, q) => s + (q.subtotal_ex_vat || 0), 0))}</strong></div><div class="stat-card"><span>Brutowinst</span><strong>${euro(rows.reduce((s, q) => s + (q.gross_profit || 0), 0))}</strong></div></section>${renderQuotesTable(rows)}`;
+  if (ui.editingQuoteId) return `${renderQuoteEditor()}${ui.quotePreviewId ? renderQuotePreviewModal(ui.quotePreviewId) : ""}`;
+  return `<section class="office-page-head">
+    <div><h2>Offertes</h2><p>Maak, bewerk, verstuur en volg offertes op.</p></div>
+    ${canManageQuotes() ? `<button class="btn success" type="button" onclick="openQuoteEditor('new')">Nieuwe offerte</button>` : ""}
+  </section>
+  <section class="stats" style="margin-bottom:14px"><div class="stat-card"><span>Open offertes</span><strong>${rows.filter((q) => ["concept", "gecontroleerd", "verzonden"].includes(q.status)).length}</strong></div><div class="stat-card"><span>Geaccepteerd</span><strong>${rows.filter((q) => q.status === "geaccepteerd").length}</strong></div><div class="stat-card"><span>Offertewaarde</span><strong>${euro(rows.reduce((s, q) => s + (q.subtotal_ex_vat || 0), 0))}</strong></div><div class="stat-card"><span>Brutowinst</span><strong>${euro(rows.reduce((s, q) => s + (q.gross_profit || 0), 0))}</strong></div></section>${renderQuotesTable(rows)}${ui.quotePreviewId ? renderQuotePreviewModal(ui.quotePreviewId) : ""}`;
 }
 
 function renderQuotesTable(rows) {
   return `<div class="table-wrap"><table><thead><tr><th>Offerte</th><th>Werkbon</th><th>Project</th><th>Klant</th><th>Adres</th><th>Datum</th><th>Status</th><th>Ex btw</th><th>Btw</th><th>Incl btw</th><th>Brutowinst</th><th>Marge</th><th>Acties</th></tr></thead><tbody>${rows.map((quote) => {
     const project = byId(state.projects, quote.project_id);
-    return `<tr><td>${quote.quote_number}</td><td>${project ? workorderNumber(project) : quote.workorder_id}</td><td>${quote.project_id}</td><td>${escapeHtml(project?.customer || "-")}</td><td>${escapeHtml(project?.address || "-")}</td><td>${safeDate(quote.created_at)}</td><td><select onchange="updateQuoteStatus('${quote.id}', this.value)">${["concept", "gecontroleerd", "verzonden", "geaccepteerd", "afgewezen", "omgezet naar opdracht"].map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></td><td>${euro(quote.subtotal_ex_vat)}</td><td>${euro(quote.vat_amount)}</td><td>${euro(quote.total_inc_vat)}</td><td>${euro(quote.gross_profit)}</td><td>${quote.margin_percent || 0}%</td><td><button class="btn secondary" onclick="exportQuotePdf('${quote.id}')">PDF</button></td></tr>`;
+    return `<tr><td>${quote.quote_number}</td><td>${project ? workorderNumber(project) : quote.workorder_id}</td><td>${quote.project_id}</td><td>${escapeHtml(project?.customer || "-")}</td><td>${escapeHtml(project?.address || "-")}</td><td>${safeDate(quote.created_at)}</td><td><select onchange="updateQuoteStatus('${quote.id}', this.value)">${["concept", "gecontroleerd", "verzonden", "geaccepteerd", "afgewezen", "omgezet naar opdracht"].map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></td><td>${euro(quote.subtotal_ex_vat)}</td><td>${euro(quote.vat_amount)}</td><td>${euro(quote.total_inc_vat)}</td><td>${euro(quote.gross_profit)}</td><td>${quote.margin_percent || 0}%</td><td><div class="button-row" style="margin-top:0"><button class="btn secondary" onclick="previewQuotePdf('${quote.id}')">PDF Voorbeeld</button><button class="btn secondary" onclick="downloadQuotePdf('${quote.id}')">PDF Downloaden</button><button class="btn success" onclick="sendQuoteToCustomer('${quote.id}')">Offerte Mailen</button></div></td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
 
@@ -6971,13 +8468,481 @@ function updateQuoteStatus(quoteId, status) {
   render();
 }
 
-function exportQuotePdf(quoteId) {
+function quoteCustomerOptions(selectedId = "") {
+  return customerScopedRows().map((customer) => `<option value="${customer.id}" ${selectedId === customer.id ? "selected" : ""}>${escapeHtml(customer.customer_name || "-")} - ${escapeHtml(customer.city || "")}</option>`).join("");
+}
+
+function quoteProjectOptions(selectedId = "") {
+  return visibleProjects().map((project) => `<option value="${project.id}" ${selectedId === project.id ? "selected" : ""}>${escapeHtml(workorderNumber(project))} - ${escapeHtml(project.customer || project.customer_name || "-")}</option>`).join("");
+}
+
+function fillQuoteCustomer(customerId) {
+  const customer = byId(state.customers || [], customerId);
+  if (!customer) return;
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value || "";
+  };
+  set("quote-customer-name", customer.customer_name);
+  set("quote-address", `${customer.address || ""} ${customer.house_number || ""}`.trim());
+  set("quote-email", customer.email);
+}
+
+function renderQuoteEditor() {
+  if (!canManageQuotes()) return `<section class="panel empty">Je hebt geen rechten om offertes te maken.</section>`;
+  const draft = ui.quoteDraft || quoteDraftFromQuote(null);
+  const settings = companySettings();
+  const company = currentCompany();
+  const lines = draft.lines?.length ? draft.lines : [defaultQuoteLine()];
+  const totals = quoteTotals(lines);
+  return `<section class="quote-editor">
+    <section class="office-page-head">
+      <div><h2>${draft.id === "new" ? "Nieuwe offerte" : `Offerte ${escapeHtml(draft.quote_number || "")}`}</h2><p>Gebruikt bedrijfsgegevens, standaard btw, uurtarief, voorrijkosten en geldigheid uit Instellingen.</p></div>
+      <div class="button-row"><button class="btn secondary" type="button" onclick="closeQuoteEditor()">Terug</button>${draft.id !== "new" ? `<button class="btn secondary" type="button" onclick="previewQuotePdf('${draft.id}')">PDF Voorbeeld</button><button class="btn secondary" type="button" onclick="downloadQuotePdf('${draft.id}')">PDF Downloaden</button><button class="btn success" type="button" onclick="sendQuoteToCustomer('${draft.id}')">Offerte Mailen</button>` : ""}</div>
+    </section>
+    <form class="panel quote-form" onsubmit="saveQuoteEditor(event)">
+      <h2>Offertegegevens</h2>
+      <div class="form-grid">
+        <label>Klant selecteren <select name="customer_id" onchange="fillQuoteCustomer(this.value)" required><option value="">Kies klant</option>${quoteCustomerOptions(draft.customer_id || "")}</select></label>
+        <label>Klantnaam <input id="quote-customer-name" name="customer_name" value="${escapeAttr(draft.customer_name || "")}" required /></label>
+        <label>Adres <input id="quote-address" name="address" value="${escapeAttr(draft.address || "")}" required /></label>
+        <label>Klant e-mail <input id="quote-email" type="email" name="customer_email" value="${escapeAttr(draft.customer_email || "")}" /></label>
+        <label>Project koppelen optioneel <select name="project_id"><option value="">Geen project</option>${quoteProjectOptions(draft.project_id || "")}</select></label>
+        <label>Werkbon koppelen optioneel <select name="workorder_id"><option value="">Geen werkbon</option>${quoteProjectOptions(draft.workorder_id || draft.project_id || "")}</select></label>
+        <label>Datum <input name="created_at_date" type="date" value="${escapeAttr(String(draft.created_at || new Date().toISOString()).slice(0, 10))}" readonly /></label>
+        <label>Vervaldatum <input name="valid_until" type="date" value="${escapeAttr(draft.valid_until || addDaysIso(new Date().toISOString(), settings.quote_valid_days || 30))}" /></label>
+        <label>Status <select name="status">${["concept", "aangeboden", "verzonden", "geaccepteerd", "afgewezen", "later opvolgen", "omgezet naar opdracht"].map((status) => `<option value="${status}" ${draft.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
+        <label class="full">Introductietekst <textarea name="intro_text" rows="3">${escapeHtml(draft.intro_text || "")}</textarea></label>
+        <label class="full">Disclaimer / voorwaarden <textarea name="terms_text" rows="4">${escapeHtml(draft.terms_text || "")}</textarea></label>
+      </div>
+      <h2>Offerte regels</h2>
+      <div class="table-wrap quote-lines-wrap"><table class="quote-lines-table"><thead><tr><th>Omschrijving</th><th>Aantal</th><th>Eenheid</th><th>Materiaalprijs</th><th>Werkuren</th><th>Uurtarief</th><th>BTW %</th><th>Ex btw</th><th>BTW</th><th>Incl btw</th><th>Brutowinst</th><th>Marge</th><th></th></tr></thead><tbody>${lines.map((line, index) => {
+        const calc = quoteLineFinancials(line);
+        return `<tr class="quote-line-row">
+          <td><input name="description" value="${escapeAttr(line.description || "")}" required /></td>
+          <td class="quote-small-field"><input name="quantity" type="number" min="0" step="0.01" value="${Number(line.quantity || 0)}" /></td>
+          <td><input name="unit" value="${escapeAttr(line.unit || "stuk")}" /></td>
+          <td><input name="material_price" type="number" min="0" step="0.01" value="${Number(line.material_price || 0)}" /></td>
+          <td class="quote-small-field"><input name="work_hours" type="number" min="0" step="0.01" value="${Number(line.work_hours || 0)}" /></td>
+          <td><input name="hourly_rate" type="number" min="0" step="0.01" value="${Number(line.hourly_rate || settings.standaard_uurtarief || 85)}" /></td>
+          <td class="quote-small-field"><select name="vat_percent">${[21, 9, 0].map((vat) => `<option value="${vat}" ${Number(line.vat_percent ?? settings.default_vat_percent ?? 21) === vat ? "selected" : ""}>${vat}%</option>`).join("")}</select></td>
+          <td>${euro(calc.subtotal)}</td><td>${euro(calc.vat)}</td><td>${euro(calc.total)}</td><td>${euro(calc.gross)}</td><td>${calc.margin}%</td>
+          <td><button class="btn danger" type="button" onclick="removeQuoteDraftLine(${index})">Verwijderen</button></td>
+        </tr>`;
+      }).join("")}</tbody></table></div>
+      <div class="button-row"><button class="btn secondary" type="button" onclick="addQuoteDraftLine()">Regel toevoegen</button></div>
+      <section class="stats office-kpis compact">
+        <div class="stat-card"><span>Bedrijf</span><strong>${escapeHtml(company?.name || "-")}</strong></div>
+        <div class="stat-card"><span>Ex btw</span><strong>${euro(totals.subtotal)}</strong></div>
+        <div class="stat-card"><span>BTW</span><strong>${euro(totals.vat)}</strong></div>
+        <div class="stat-card"><span>Incl btw</span><strong>${euro(totals.total)}</strong></div>
+        <div class="stat-card"><span>Brutowinst</span><strong>${euro(totals.gross)}</strong></div>
+      </section>
+      <div class="button-row"><button class="btn success" type="submit">Concept opslaan</button>${draft.id !== "new" ? `<button class="btn secondary" type="button" onclick="previewQuotePdf('${draft.id}')">PDF Voorbeeld</button><button class="btn secondary" type="button" onclick="downloadQuotePdf('${draft.id}')">PDF Downloaden</button><button class="btn success" type="button" onclick="sendQuoteToCustomer('${draft.id}')">Offerte Mailen</button>` : ""}</div>
+    </form>
+  </section>`;
+}
+
+function quoteLinesFromForm(form) {
+  return [...form.querySelectorAll(".quote-line-row")].map((row) => normalizeQuoteEditorLine({
+    description: row.querySelector('[name="description"]')?.value,
+    quantity: row.querySelector('[name="quantity"]')?.value,
+    unit: row.querySelector('[name="unit"]')?.value,
+    material_price: row.querySelector('[name="material_price"]')?.value,
+    work_hours: row.querySelector('[name="work_hours"]')?.value,
+    hourly_rate: row.querySelector('[name="hourly_rate"]')?.value,
+    vat_percent: row.querySelector('[name="vat_percent"]')?.value,
+  })).filter((line) => line.description);
+}
+
+function normalizeQuoteEditorLine(line) {
+  const normalized = {
+    id: line.id || uid("ql"),
+    type: "custom",
+    description: String(line.description || "").trim(),
+    quantity: Number(line.quantity || 0),
+    unit: String(line.unit || "stuk").trim(),
+    material_price: Number(line.material_price || 0),
+    work_hours: Number(line.work_hours || 0),
+    hourly_rate: Number(line.hourly_rate || 0),
+    vat_percent: Number(line.vat_percent || 0),
+    cost_price: Number(line.cost_price || 0),
+  };
+  const calc = quoteLineFinancials(normalized);
+  return {
+    ...normalized,
+    sell_price: normalized.material_price + (normalized.work_hours * normalized.hourly_rate),
+    total_sell: calc.subtotal,
+    total_cost: calc.cost,
+    gross_profit: calc.gross,
+    margin_percent: calc.margin,
+  };
+}
+
+function saveQuoteEditor(event) {
+  event.preventDefault();
+  if (!canManageQuotes()) return alert("Je hebt geen rechten om offertes te maken.");
+  const form = event.target;
+  const data = new FormData(form);
+  const quoteId = ui.quoteDraft?.id && ui.quoteDraft.id !== "new" ? ui.quoteDraft.id : uid("quote");
+  const existing = byId(state.quotes || [], quoteId);
+  const lines = quoteLinesFromForm(form);
+  if (!lines.length) return alert("Voeg minimaal een offerteregel toe.");
+  const totals = quoteTotals(lines);
+  const customer = byId(state.customers || [], String(data.get("customer_id") || ""));
+  const now = new Date().toISOString();
+  const quote = {
+    ...(existing || {}),
+    id: quoteId,
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    quote_number: existing?.quote_number || quoteNumber(),
+    customer_id: customer?.id || String(data.get("customer_id") || ""),
+    customer_name: String(data.get("customer_name") || customer?.customer_name || "").trim(),
+    customer_email: String(data.get("customer_email") || customer?.email || "").trim(),
+    address: String(data.get("address") || customer?.address || "").trim(),
+    project_id: String(data.get("project_id") || ""),
+    workorder_id: String(data.get("workorder_id") || data.get("project_id") || ""),
+    mechanic_id: "",
+    status: String(data.get("status") || "concept"),
+    subtotal_ex_vat: totals.subtotal,
+    vat_amount: totals.vat,
+    total_inc_vat: totals.total,
+    total_cost: totals.cost,
+    gross_profit: totals.gross,
+    margin_percent: totals.subtotal ? Math.round((totals.gross / totals.subtotal) * 10000) / 100 : 0,
+    intro_text: String(data.get("intro_text") || ""),
+    terms_text: String(data.get("terms_text") || ""),
+    valid_until: String(data.get("valid_until") || ""),
+    created_at: existing?.created_at || now,
+    updated_at: now,
+    created_by: existing?.created_by || currentUser()?.id || "",
+  };
+  state.quotes = state.quotes || [];
+  if (existing) Object.assign(existing, quote);
+  else state.quotes.push(quote);
+  state.quoteLines = (state.quoteLines || []).filter((line) => line.quote_id !== quote.id);
+  lines.forEach((line) => state.quoteLines.push({ ...line, id: uid("ql"), company_id: currentCompanyId(), companyId: currentCompanyId(), quote_id: quote.id }));
+  logPlatformAction("offerte opgeslagen", currentCompanyId(), quote.quote_number);
+  saveState();
+  ui.editingQuoteId = "";
+  ui.quoteDraft = null;
+  render();
+}
+
+function quotePdfFilename(quote) {
+  return `offerte-${quote.quote_number || quote.id}-${slugify(quote.customer_name || "klant")}.pdf`;
+}
+
+function quotePdfSettings() {
+  const settings = companySettings();
+  return {
+    showLogo: settings.quote_show_company_logo !== false,
+    showKvk: settings.quote_show_kvk !== false,
+    showVatNumber: settings.quote_show_vat_number !== false,
+    showAcceptanceBlock: settings.quote_show_acceptance_block !== false,
+    includeTerms: settings.quote_include_terms !== false,
+    disclaimer: settings.quote_default_disclaimer || "Op al onze offertes zijn onze algemene voorwaarden van toepassing. Deze offerte is geldig tot de vermelde vervaldatum.",
+  };
+}
+
+function getFullQuoteExportData(quoteId) {
   const quote = byId(state.quotes || [], quoteId);
-  const project = byId(state.projects, quote?.project_id);
-  const lines = (state.quoteLines || []).filter((line) => line.quote_id === quoteId);
-  if (!quote) return;
-  document.getElementById("print-report").innerHTML = `<h1>Offerte ${quote.quote_number}</h1><p>${escapeHtml(project?.customer || "")}<br>${escapeHtml(project?.address || "")}</p><table><thead><tr><th>Omschrijving</th><th>Aantal</th><th>Verkoop</th><th>Totaal</th></tr></thead><tbody>${lines.map((line) => `<tr><td>${escapeHtml(line.description)}</td><td>${line.quantity} ${line.unit}</td><td>${euro(line.sell_price)}</td><td>${euro(line.total_sell)}</td></tr>`).join("")}</tbody></table><h2>Totaal incl btw: ${euro(quote.total_inc_vat)}</h2><p>${escapeHtml(quote.terms_text || "")}</p>`;
+  if (!quote || !isSameCompany(quote)) return null;
+  const project = byId(state.projects || [], quote.project_id);
+  const workorder = byId(state.projects || [], quote.workorder_id || quote.project_id);
+  const customer = byId(state.customers || [], quote.customer_id) || customerForProject(project) || null;
+  const company = byId(state.companies || [], strictRecordCompanyId(quote)) || currentCompany();
+  normalizeCompanyBusinessDetails(company);
+  const lines = (state.quoteLines || []).filter((line) => line.quote_id === quoteId).map((line) => {
+    const normalized = normalizeQuoteEditorLine(line);
+    return { ...line, ...normalized, calc: quoteLineFinancials(normalized) };
+  });
+  const totals = quoteTotals(lines);
+  return { company, customer, quote, project, workorder, lines, totals, settings: quotePdfSettings() };
+}
+
+function renderQuotePdfBrandHeader(data) {
+  const { company, settings } = data;
+  const logo = settings.showLogo ? companyLogoSrc(company) : "";
+  const registry = [
+    settings.showKvk && company.kvk_number ? `KvK: ${company.kvk_number}` : "",
+    settings.showVatNumber && company.vat_number ? `BTW: ${company.vat_number}` : "",
+  ].filter(Boolean).join(" | ");
+  const contact = [company.phone, company.email || company.contact_email, company.website].filter(Boolean).join(" | ");
+  return `<div class="pdf-brand quote-pdf-brand" style="border-bottom-color:${escapeAttr(company.primary_color || "#d6a73c")}">
+    ${logo ? `<img src="${escapeAttr(logo)}" alt="${escapeAttr(company.name || "Logo")}" />` : `<div class="pdf-brand-fallback">${escapeHtml(companyFallbackMark(company))}</div>`}
+    <div>
+      <h1>${escapeHtml(company.name || "WerkbonSysteem.nl")}</h1>
+      <p>${escapeHtml(company.address || company.company_address || "Niet ingevuld")}</p>
+      <p>${escapeHtml(contact || "Niet ingevuld")}</p>
+      ${registry ? `<p>${escapeHtml(registry)}</p>` : ""}
+    </div>
+  </div>`;
+}
+
+function quoteCustomerValue(data, field, fallback = "") {
+  const { customer, quote, project } = data;
+  const value = customer?.[field] ?? "";
+  if (value) return value;
+  if (field === "customer_name") return quote.customer_name || project?.customer || fallback;
+  if (field === "address") return quote.address || project?.address || fallback;
+  if (field === "email") return quote.customer_email || project?.email || fallback;
+  if (field === "phone") return project?.phone || fallback;
+  return fallback;
+}
+
+function renderQuotePdfHtml(data) {
+  if (!data) return "";
+  const { company, quote, project, workorder, lines, totals, settings } = data;
+  const primary = company.primary_color || "#08172e";
+  const secondary = company.secondary_color || "#d6a73c";
+  const terms = quote.terms_text || settings.disclaimer;
+  const customerRows = [
+    ["Klantnaam", quoteCustomerValue(data, "customer_name")],
+    ["Contactpersoon", quoteCustomerValue(data, "contact_person")],
+    ["Adres", quoteCustomerValue(data, "address")],
+    ["Postcode", quoteCustomerValue(data, "postal_code")],
+    ["Plaats", quoteCustomerValue(data, "city")],
+    ["Telefoonnummer", quoteCustomerValue(data, "phone")],
+    ["E-mailadres", quoteCustomerValue(data, "email")],
+  ];
+  const quoteRows = [
+    ["Offertenummer", quote.quote_number],
+    ["Datum", safeDate(quote.created_at)],
+    ["Geldig tot", quote.valid_until ? safeDate(quote.valid_until) : "-"],
+    ["Projectnummer", quote.project_id || "-"],
+    ["Werkbonnummer", workorder ? workorderNumber(workorder) : quote.workorder_id || "-"],
+    ["Status", quote.status || "-"],
+  ];
+  return `<article class="workorder-pdf quote-pdf" style="--pdf-primary:${escapeAttr(primary)};--pdf-secondary:${escapeAttr(secondary)}">
+    ${renderQuotePdfBrandHeader(data)}
+    <section class="pdf-hero quote-pdf-hero" style="border-color:${escapeAttr(secondary)}">
+      <div>
+        <p class="pdf-eyebrow">Offerte</p>
+        <h1>${escapeHtml(quote.quote_number || "Concept")}</h1>
+        <p>${escapeHtml(quote.customer_name || project?.customer || "Niet ingevuld")}</p>
+      </div>
+      <div class="pdf-status" style="border-left-color:${escapeAttr(secondary)}"><span>Totaal incl btw</span><strong>${euro(quote.total_inc_vat ?? totals.total)}</strong></div>
+    </section>
+    <section class="pdf-section"><h2>Bedrijfsgegevens</h2><div class="pdf-kv">
+      ${[
+        ["Bedrijfsnaam", company.name],
+        ["Adres", company.address || company.company_address],
+        ["Telefoonnummer", company.phone],
+        ["E-mailadres", company.email || company.contact_email],
+        ["Website", company.website],
+        ...(settings.showKvk ? [["KvK nummer", company.kvk_number]] : []),
+        ...(settings.showVatNumber ? [["BTW nummer", company.vat_number]] : []),
+      ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(textOrFallback(value))}</strong></div>`).join("")}
+    </div></section>
+    <section class="pdf-section"><h2>Klantgegevens</h2><div class="pdf-kv">${customerRows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(textOrFallback(value))}</strong></div>`).join("")}</div></section>
+    <section class="pdf-section"><h2>Offertegegevens</h2><div class="pdf-kv">${quoteRows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(textOrFallback(value, "-"))}</strong></div>`).join("")}</div></section>
+    ${quote.intro_text ? `<section class="pdf-section"><h2>Introductie</h2><div class="pdf-text-block"><p>${escapeHtml(quote.intro_text)}</p></div></section>` : ""}
+    <section class="pdf-section"><h2>Offerteregels</h2><table class="pdf-table quote-pdf-table"><thead><tr><th>Omschrijving</th><th>Aantal</th><th>Eenheid</th><th>Materiaalprijs</th><th>Werkuren</th><th>Uurtarief</th><th>BTW %</th><th>Totaalregel</th></tr></thead><tbody>${lines.map((line) => `<tr>
+      <td>${escapeHtml(line.description || "")}</td>
+      <td>${Number(line.quantity || 0)}</td>
+      <td>${escapeHtml(line.unit || "")}</td>
+      <td>${euro(line.material_price || 0)}</td>
+      <td>${Number(line.work_hours || 0)}</td>
+      <td>${euro(line.hourly_rate || 0)}</td>
+      <td>${Number(line.vat_percent || 0)}%</td>
+      <td>${euro(line.calc.total)}</td>
+    </tr>`).join("")}</tbody></table></section>
+    <section class="pdf-section"><h2>Samenvatting</h2><div class="pdf-kv">
+      <div><span>Totaal ex btw</span><strong>${euro(quote.subtotal_ex_vat ?? totals.subtotal)}</strong></div>
+      <div><span>BTW</span><strong>${euro(quote.vat_amount ?? totals.vat)}</strong></div>
+      <div><span>Totaal incl btw</span><strong>${euro(quote.total_inc_vat ?? totals.total)}</strong></div>
+      <div><span>Brutowinst</span><strong>${euro(quote.gross_profit ?? totals.gross)}</strong></div>
+      <div><span>Marge</span><strong>${Number(quote.margin_percent ?? marginPercent(totals.subtotal, totals.cost))}%</strong></div>
+    </div></section>
+    ${settings.includeTerms ? `<section class="pdf-section"><h2>Disclaimer / voorwaarden</h2><div class="pdf-text-block"><p>${escapeHtml(textOrFallback(terms))}</p></div></section>` : ""}
+    <section class="pdf-section"><h2>Ondertekening</h2><p>Met vriendelijke groet,</p><p><strong>${escapeHtml(company.name || "WerkbonSysteem.nl")}</strong></p>${settings.showLogo && companyLogoSrc(company) ? `<img class="quote-pdf-sign-logo" src="${escapeAttr(companyLogoSrc(company))}" alt="${escapeAttr(company.name || "Logo")}" />` : ""}</section>
+    ${settings.showAcceptanceBlock ? `<section class="pdf-section quote-acceptance"><h2>Acceptatieblok</h2><p>□ Akkoord</p><div class="quote-acceptance-grid"><div>Naam:<br>__________________</div><div>Datum:<br>__________________</div><div>Handtekening:<br>__________________</div></div></section>` : ""}
+  </article>`;
+}
+
+function ensureQuotePdfDocument(quote, html = "") {
+  const filename = quotePdfFilename(quote);
+  const existing = (state.files || []).find((file) => file.module === "quotes" && file.entityId === quote.id && file.filename === filename && !file.deleted);
+  const dataUrl = html ? `data:text/html;charset=utf-8,${encodeURIComponent(html)}` : "";
+  const metadata = existing || createFileMetadata({
+    companyId: strictRecordCompanyId(quote),
+    module: "quotes",
+    entityId: quote.id,
+    filename,
+    mimeType: "application/pdf",
+    uploadedBy: currentUser()?.id || "",
+    dataUrl,
+  });
+  if (existing && html) registerStorageObject(existing, dataUrl);
+  state.documents = state.documents || [];
+  const documentRecord = {
+    id: uid("document"),
+    company_id: strictRecordCompanyId(quote),
+    companyId: strictRecordCompanyId(quote),
+    document_type: "quote_pdf",
+    module: "quotes",
+    entity_id: quote.id,
+    entityId: quote.id,
+    quote_id: quote.id,
+    customer_id: quote.customer_id || "",
+    project_id: quote.project_id || "",
+    filename,
+    file_name: filename,
+    mime_type: "application/pdf",
+    storage_file_id: metadata.id,
+    storagePath: metadata.storagePath,
+    storage_path: metadata.storagePath,
+    created_at: new Date().toISOString(),
+    created_by: currentUser()?.id || "",
+  };
+  state.documents = state.documents.filter((doc) => !(doc.document_type === "quote_pdf" && doc.quote_id === quote.id));
+  state.documents.push(documentRecord);
+  quote.pdf_file_id = metadata.id;
+  quote.pdf_storage_path = metadata.storagePath;
+  quote.pdf_generated_at = new Date().toISOString();
+  auditStorageEvent("quote_pdf_generated", metadata);
+  return { metadata, document: documentRecord, filename };
+}
+
+function renderQuotePdfToPrintArea(quoteId) {
+  const data = getFullQuoteExportData(quoteId);
+  if (!data) return null;
+  const html = renderQuotePdfHtml(data);
+  document.getElementById("print-report").innerHTML = html;
+  ensureQuotePdfDocument(data.quote, html);
+  return { ...data, html, filename: quotePdfFilename(data.quote) };
+}
+
+function previewQuotePdf(quoteId) {
+  const data = getFullQuoteExportData(quoteId);
+  if (!data) return alert("Offerte niet gevonden.");
+  ui.quotePreviewId = quoteId;
+  ensureQuotePdfDocument(data.quote, renderQuotePdfHtml(data));
+  saveState();
+  render();
+}
+
+function closeQuotePreview() {
+  ui.quotePreviewId = "";
+  render();
+}
+
+function renderQuotePreviewModal(quoteId) {
+  const data = getFullQuoteExportData(quoteId);
+  if (!data) return "";
+  return `<section class="modal-backdrop"><div class="panel confirm-modal quote-preview-modal">
+    <div class="article-head">
+      <div><h2>PDF Voorbeeld</h2><p>${escapeHtml(quotePdfFilename(data.quote))}</p></div>
+      <button class="btn secondary" type="button" onclick="closeQuotePreview()">Sluiten</button>
+    </div>
+    <div class="quote-preview-sheet">${renderQuotePdfHtml(data)}</div>
+    <div class="button-row"><button class="btn secondary" type="button" onclick="downloadQuotePdf('${quoteId}')">PDF Downloaden</button><button class="btn success" type="button" onclick="sendQuoteToCustomer('${quoteId}')">Offerte Mailen</button></div>
+  </div></section>`;
+}
+
+function downloadQuotePdf(quoteId) {
+  const data = renderQuotePdfToPrintArea(quoteId);
+  if (!data) return alert("Offerte niet gevonden.");
+  const previousTitle = document.title;
+  document.title = data.filename;
   window.print();
+  setTimeout(() => {
+    document.title = previousTitle;
+  }, 300);
+  logQuoteAudit("quote_pdf_downloaded", data.quote, data.filename);
+  saveState();
+}
+
+function exportQuotePdf(quoteId) {
+  downloadQuotePdf(quoteId);
+}
+
+function quotePdfAttachment(quote) {
+  const data = getFullQuoteExportData(quote.id);
+  const html = data ? renderQuotePdfHtml(data) : "";
+  const { metadata, filename } = ensureQuotePdfDocument(quote, html);
+  return { name: filename, file_name: filename, type: "quote_pdf", storage_file_id: metadata.id, storagePath: metadata.storagePath, storage_path: metadata.storagePath, mime_type: "application/pdf" };
+}
+
+function logQuoteAudit(action, quote, details = "") {
+  state.auditLogs = state.auditLogs || [];
+  state.auditLogs.push({
+    id: uid("audit"),
+    companyId: strictRecordCompanyId(quote),
+    company_id: strictRecordCompanyId(quote),
+    userId: currentUser()?.id || "",
+    user_id: currentUser()?.id || "",
+    role: currentUser()?.role || "",
+    action,
+    entityType: "quote",
+    entity_type: "quote",
+    entityId: quote.id,
+    entity_id: quote.id,
+    details: details || quote.quote_number || "",
+    createdAt: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  });
+}
+
+function sendQuoteToCustomer(quoteId) {
+  const quote = byId(state.quotes || [], quoteId);
+  if (!quote || !isSameCompany(quote)) return alert("Offerte niet gevonden.");
+  if (!canManageQuotes()) return alert("Je hebt geen rechten om offertes te versturen.");
+  const to = quote.customer_email || byId(state.customers || [], quote.customer_id)?.email || "";
+  if (!to) return alert("Geen e-mailadres bekend voor deze klant.");
+  const company = currentCompany();
+  const attachment = quotePdfAttachment(quote);
+  const subject = `Offerte ${quote.quote_number} - ${company?.name || "WerkbonSysteem.nl"}`;
+  const body = `Beste ${quote.customer_name || "klant"},\n\nIn de bijlage ontvangt u onze offerte.\n\n${companyEmailSignature(company, company?.name || "WerkbonSysteem.nl")}`;
+  state.emailMessages = state.emailMessages || [];
+  const message = {
+    id: uid("email"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    direction: "outgoing",
+    to_email: to,
+    subject,
+    body,
+    status: "concept_verzonden_mock",
+    quote_id: quote.id,
+    attachments: [attachment],
+    created_at: new Date().toISOString(),
+    created_by: currentUser()?.id || "",
+  };
+  state.emailMessages.push(message);
+  quote.status = "verzonden";
+  quote.sent_at = new Date().toISOString();
+  quote.updated_at = quote.sent_at;
+  logQuoteAudit("quote_sent", quote, `Offerte ${quote.quote_number} verzonden naar ${to}. Bijlage: ${attachment.file_name}`);
+  saveState();
+  window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  alert(`Offerte ${quote.quote_number} klaargezet voor ${to}.`);
+  render();
+}
+
+function duplicateQuote(quoteId) {
+  const quote = byId(state.quotes || [], quoteId);
+  if (!quote || !isSameCompany(quote) || !canManageQuotes()) return;
+  const now = new Date().toISOString();
+  const clone = { ...quote, id: uid("quote"), quote_number: quoteNumber(), status: "concept", created_at: now, updated_at: now, sent_at: "", accepted_at: "" };
+  state.quotes.push(clone);
+  (state.quoteLines || []).filter((line) => line.quote_id === quote.id).forEach((line) => state.quoteLines.push({ ...line, id: uid("ql"), quote_id: clone.id }));
+  logQuoteAudit("quote_duplicated", clone, `Gekopieerd van ${quote.quote_number}`);
+  saveState();
+  render();
+}
+
+function deleteQuote(quoteId) {
+  const quote = byId(state.quotes || [], quoteId);
+  if (!quote || !isSameCompany(quote) || !canManageQuotes()) return;
+  if (!confirm("Weet je zeker dat je deze offerte wilt verwijderen?")) return;
+  state.quotes = (state.quotes || []).filter((item) => item.id !== quote.id);
+  state.quoteLines = (state.quoteLines || []).filter((line) => line.quote_id !== quote.id);
+  logQuoteAudit("quote_deleted", quote, quote.quote_number);
+  saveState();
+  render();
 }
 
 function renderProfitDashboard() {
@@ -8473,7 +10438,7 @@ function renderCustomers() {
   return `
     <section class="panel" style="margin-bottom:14px">
       <div class="article-head"><div><h2>Klanten</h2><p>Beheer klanten binnen ${escapeHtml(currentCompany()?.name || "eigen bedrijf")}.</p></div><button class="btn success" type="button" onclick="openCustomerEdit('new')">Klant toevoegen</button></div>
-      <label>Zoeken <input value="${escapeAttr(ui.customerSearch || "")}" oninput="ui.customerSearch=this.value; render()" placeholder="Zoek klant, plaats, telefoon of bron" /></label>
+      <label>Zoeken <input value="${escapeAttr(ui.customerSearch || "")}" oninput="setCustomerSearch(this.value)" placeholder="Zoek klant, plaats, telefoon of bron" /></label>
     </section>
     <div class="table-wrap"><table><thead><tr><th>Actief</th><th>Klant</th><th>Adres</th><th>Telefoon</th><th>E-mail</th><th>Bron</th><th>Aangemaakt door</th><th>Laatste notitie</th><th>Vervolgactie</th><th>Actie</th></tr></thead><tbody>${rows.map((customer) => {
       const note = latestCustomerNote(customer.id);
@@ -8485,6 +10450,7 @@ function renderCustomers() {
 function pageTitle(route) {
   if (route.startsWith("login")) return ["WerkbonSysteem.nl", "Loginportaal voor werkbonnen, monteurs, voorraad en bestellingen."];
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
+  if (route.startsWith("whatsapp")) return ["WhatsApp", "Klantberichten lezen en beantwoorden."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
   if (route.startsWith("new")) return ["Nieuw project", "Maak direct een registratie aan."];
@@ -8533,6 +10499,21 @@ function renderRoute(route) {
 function normalizeWorkOrderPhoto(photo, project) {
   const companyId = recordCompanyId(project);
   const uploadedAt = photo.uploaded_at || photo.uploadedAt || photo.createdAt || new Date().toISOString();
+  const fileName = photo.file_name || photo.fileName || photo.name || "foto";
+  let fileMeta = photo.storage_file_id ? (state.files || []).find((file) => file.id === photo.storage_file_id) : null;
+  const existingDataUrl = photo.data_url || photo.dataUrl || photo.blob_url || storageDataUrl(fileMeta);
+  if (!fileMeta && existingDataUrl) {
+    fileMeta = createFileMetadata({
+      companyId,
+      module: "workorders",
+      entityId: photo.workorder_id || photo.workorderId || project.id,
+      filename: fileName,
+      mimeType: photo.mime_type || photo.mimeType || "image/*",
+      uploadedBy: photo.uploaded_by || photo.uploadedBy || currentUser()?.id || "",
+      dataUrl: existingDataUrl,
+    });
+    auditStorageEvent("file_metadata_created_from_workorder_photo", fileMeta);
+  }
   return {
     id: photo.id || uid("photo"),
     company_id: photo.company_id || photo.companyId || companyId,
@@ -8540,10 +10521,13 @@ function normalizeWorkOrderPhoto(photo, project) {
     workorder_id: photo.workorder_id || photo.workorderId || project.id,
     category: photo.category || photo.type || "vrije foto",
     type: photo.type || photo.category || "vrije foto",
-    file_name: photo.file_name || photo.fileName || photo.name || "foto",
-    name: photo.name || photo.file_name || photo.fileName || "foto",
-    data_url: photo.data_url || photo.dataUrl || "",
-    dataUrl: photo.dataUrl || photo.data_url || "",
+    file_name: fileName,
+    name: photo.name || fileName,
+    storage_file_id: photo.storage_file_id || fileMeta?.id || "",
+    storagePath: photo.storagePath || photo.storage_path || fileMeta?.storagePath || "",
+    storage_path: photo.storage_path || photo.storagePath || fileMeta?.storagePath || "",
+    data_url: photo.data_url || storageDataUrl(fileMeta) || "",
+    dataUrl: photo.dataUrl || storageDataUrl(fileMeta) || "",
     blob_url: photo.blob_url || photo.blobUrl || "",
     uploaded_by: photo.uploaded_by || photo.uploadedBy || currentUser()?.id || "",
     uploaded_at: uploadedAt,
@@ -8556,12 +10540,12 @@ function storedWorkOrderPhotos(project) {
   if (!workOrder) return [];
   workOrder.photos = (workOrder.photos || [])
     .map((photo) => normalizeWorkOrderPhoto(photo, project))
-    .filter((photo) => photo.data_url || photo.dataUrl || photo.blob_url);
+    .filter((photo) => photo.data_url || photo.dataUrl || photo.blob_url || photo.storage_file_id);
   return workOrder.photos;
 }
 
 function photoSrc(photo) {
-  return photo.data_url || photo.dataUrl || photo.blob_url || "";
+  return photo.data_url || photo.dataUrl || photo.blob_url || storageDataUrl(photo.storage_file_id) || "";
 }
 
 function photoTimestamp(photo) {
@@ -8588,6 +10572,16 @@ async function addWorkOrderPhotos(projectId, inputOrFiles, category = "vrije fot
   try {
     const photos = await Promise.all(files.map(async (file) => {
       const dataUrl = await readFileAsDataUrl(file);
+      const metadata = createFileMetadata({
+        companyId: recordCompanyId(project),
+        module: "workorders",
+        entityId: project.id,
+        filename: file.name,
+        mimeType: file.type || "image/*",
+        uploadedBy: currentUser()?.id || "",
+        dataUrl,
+      });
+      auditStorageEvent("workorder_photo_uploaded", metadata);
       return {
         id: uid("photo"),
         company_id: recordCompanyId(project),
@@ -8597,6 +10591,9 @@ async function addWorkOrderPhotos(projectId, inputOrFiles, category = "vrije fot
         type: selectedCategory,
         file_name: file.name,
         name: file.name,
+        storage_file_id: metadata.id,
+        storagePath: metadata.storagePath,
+        storage_path: metadata.storagePath,
         data_url: dataUrl,
         dataUrl,
         uploaded_by: currentUser()?.id || "",
@@ -8621,7 +10618,16 @@ function removeWorkOrderPhoto(projectId, photoRef) {
   const workOrder = ensureWorkOrder(project);
   const photos = storedWorkOrderPhotos(project);
   const ref = String(photoRef);
+  const removed = photos.find((photo, index) => photo.id === ref || String(index) === ref);
   workOrder.photos = photos.filter((photo, index) => photo.id !== ref && String(index) !== ref);
+  if (removed?.storage_file_id) {
+    const file = (state.files || []).find((item) => item.id === removed.storage_file_id);
+    if (file) {
+      file.deleted = true;
+      file.deleted_at = new Date().toISOString();
+      auditStorageEvent("workorder_photo_deleted", file);
+    }
+  }
   workOrder.photo_count = workOrder.photos.length;
   project.photo_count = workOrder.photos.length;
   saveState();
@@ -8670,6 +10676,7 @@ function renderWorkOrderForm(project) {
         <label>Oplossing uitgevoerd <input value="${escapeAttr(workOrder.solution)}" onchange="setWorkOrderField('${project.id}', 'solution', this.value)" /></label>
         <label>Opmerkingen <input value="${escapeAttr(workOrder.notes)}" onchange="setWorkOrderField('${project.id}', 'notes', this.value)" /></label>
       </div>
+      ${gasRequired ? renderGasApplianceRegistration(project, workOrder) : ""}
       ${gasRequired ? renderCoKeurFields(project, workOrder) : ""}
       ${renderChecklistAnswers(project, workOrder)}
       <section style="margin-top:14px">
@@ -8679,6 +10686,7 @@ function renderWorkOrderForm(project) {
           <label>Fotocategorie
             <select id="photo-category-${project.id}">
               <option value="installatie">Installatie</option>
+              <option value="typeplaatje">Typeplaatje</option>
               <option value="voor situatie">Voor situatie</option>
               <option value="na situatie">Na situatie</option>
               <option value="rookgas / veiligheid">Rookgas / veiligheid</option>
@@ -8722,6 +10730,8 @@ function validateWorkOrder(project) {
     if (!workOrder.checklistAnswers[item.id]) errors.push(`Checklistpunt verplicht: ${item.label}`);
   });
   if (workOrder.gasApplianceWork === "ja") {
+    const appliance = workOrder.appliance || {};
+    if (!String(appliance.brand || "").trim()) errors.push("Merk toestel is verplicht bij werkzaamheden aan een gastoestel.");
     if (!numericValue(workOrder.measurements.CO_before_ppm) || !numericValue(workOrder.measurements.CO_after_ppm)) errors.push("CO meting opstellingsruimte voor en na werkzaamheden is verplicht.");
     const fields = [
       ["co_full_load", "CO vollast"],
@@ -8776,6 +10786,16 @@ function defaultRouteForUser(user = currentUser()) {
   return "#/start";
 }
 
+function platformMaintenanceBlocks(user = currentUser()) {
+  const settings = ensurePlatformSettings();
+  return Boolean(settings.maintenance_mode && settings.maintenance_platform_admin_only !== false && userRole(user) !== ROLES.PLATFORM_ADMIN);
+}
+
+function renderPlatformMaintenanceNotice() {
+  const settings = ensurePlatformSettings();
+  return `<section class="panel empty"><h2>Onderhoudsmodus actief</h2><p>${escapeHtml(settings.maintenance_message || "WerkbonSysteem.nl is tijdelijk in onderhoud.")}</p><button class="btn secondary" type="button" onclick="logout()">Uitloggen</button></section>`;
+}
+
 function login(event) {
   event.preventDefault();
   const form = new FormData(event.target);
@@ -8792,6 +10812,10 @@ function login(event) {
   }
   if (!user) {
     document.getElementById("login-error").textContent = "E-mail of wachtwoord klopt niet.";
+    return;
+  }
+  if (platformMaintenanceBlocks(user)) {
+    document.getElementById("login-error").textContent = ensurePlatformSettings().maintenance_message || "WerkbonSysteem.nl is tijdelijk in onderhoud.";
     return;
   }
   if (userRole(user) !== ROLES.PLATFORM_ADMIN) {
@@ -8818,6 +10842,7 @@ function quickLogin(email) {
     Object.assign(user, { password: "platform123", role: ROLES.PLATFORM_ADMIN, company_id: null, companyId: null, active: true, deleted: false });
   }
   if (!user) return;
+  if (platformMaintenanceBlocks(user)) return;
   if (userRole(user) !== ROLES.PLATFORM_ADMIN) {
     const company = byId(state.companies || [], recordCompanyId(user));
     if (company && company.active === false) return;
@@ -8928,6 +10953,8 @@ function validateWorkOrder(project) {
     if (!workOrder.checklistAnswers[item.id]) errors.push(`Checklistpunt verplicht: ${item.label}`);
   });
   if (workOrder.gasApplianceWork === "ja") {
+    const appliance = workOrder.appliance || {};
+    if (!String(appliance.brand || "").trim()) errors.push("Merk toestel is verplicht bij werkzaamheden aan een gastoestel.");
     if (!numericValue(workOrder.measurements.CO_before_ppm) || !numericValue(workOrder.measurements.CO_after_ppm)) errors.push("CO meting opstellingsruimte voor en na werkzaamheden is verplicht.");
     const fields = [
       ["co_full_load", "CO vollast"],
@@ -9615,7 +11642,7 @@ function renderQuotesTable(rows) {
   return `<div class="table-wrap"><table><thead><tr><th>Offerte</th><th>Werkbon</th><th>Project</th><th>Klant</th><th>Adres</th><th>Datum</th><th>Status</th><th>Ex btw</th><th>Btw</th><th>Incl btw</th><th>Brutowinst</th><th>Marge</th><th>Acties</th></tr></thead><tbody>${rows.map((quote) => {
     const project = byId(state.projects, quote.project_id);
     const statuses = ["concept", "aangeboden", "gecontroleerd", "verzonden", "geaccepteerd", "afgewezen", "later opvolgen", "omgezet naar opdracht"];
-    return `<tr><td>${escapeHtml(quote.quote_number)}</td><td>${project ? workorderNumber(project) : escapeHtml(quote.workorder_id || "-")}</td><td>${escapeHtml(quote.project_id || "-")}</td><td>${escapeHtml(project?.customer || "-")}</td><td>${escapeHtml(project?.address || "-")}</td><td>${safeDate(quote.created_at)}</td><td><select onchange="updateQuoteStatus('${quote.id}', this.value)">${statuses.map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></td><td>${euro(quote.subtotal_ex_vat)}</td><td>${euro(quote.vat_amount)}</td><td>${euro(quote.total_inc_vat)}</td><td>${euro(quote.gross_profit)}</td><td>${quote.margin_percent || 0}%</td><td><button class="btn secondary" onclick="exportQuotePdf('${quote.id}')">PDF</button></td></tr>`;
+    return `<tr><td>${escapeHtml(quote.quote_number)}</td><td>${project ? workorderNumber(project) : escapeHtml(quote.workorder_id || "-")}</td><td>${escapeHtml(quote.project_id || "-")}</td><td>${escapeHtml(quote.customer_name || project?.customer || "-")}</td><td>${escapeHtml(quote.address || project?.address || "-")}</td><td>${safeDate(quote.created_at)}</td><td><select onchange="updateQuoteStatus('${quote.id}', this.value)">${statuses.map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></td><td>${euro(quote.subtotal_ex_vat)}</td><td>${euro(quote.vat_amount)}</td><td>${euro(quote.total_inc_vat)}</td><td>${euro(quote.gross_profit)}</td><td>${quote.margin_percent || 0}%</td><td><div class="button-row" style="margin-top:0"><button class="btn secondary" onclick="openQuoteEditor('${quote.id}')">Bewerken</button><button class="btn secondary" onclick="previewQuotePdf('${quote.id}')">PDF Voorbeeld</button><button class="btn secondary" onclick="downloadQuotePdf('${quote.id}')">PDF Downloaden</button><button class="btn success" onclick="sendQuoteToCustomer('${quote.id}')">Offerte Mailen</button><button class="btn ghost" onclick="duplicateQuote('${quote.id}')">Dupliceren</button><button class="btn danger" onclick="deleteQuote('${quote.id}')">Verwijderen</button></div></td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
 
@@ -10294,7 +12321,7 @@ function renderMechanicAgendaCard(event) {
     </div>
     ${event.notes ? `<p class="muted">${escapeHtml(event.notes)}</p>` : ""}
     <div class="button-row">
-      ${canOpenProject ? `<a class="btn success" href="#/project/${project.id}">Open werkbon</a>` : companySettings().mechanics_can_create_events ? `<button class="btn success" type="button" onclick="createWorkorderFromPlanningEvent('${event.id}')">Werkbon maken</button>` : ""}
+      ${canOpenProject ? `<a class="btn success" href="#/project/${project.id}">Open werkbon</a>` : companySettings().mechanics_can_create_events && hasWorkorderPermission("can_create_workorders") ? `<button class="btn success" type="button" onclick="createWorkorderFromPlanningEvent('${event.id}')">Werkbon maken</button>` : ""}
       <a class="btn secondary" target="_blank" href="${escapeAttr(planningMapsUrl(event))}">Route openen</a>
       ${phone ? `<a class="btn secondary" href="tel:${escapeAttr(phone)}">Bel klant</a>` : ""}
       ${["onderweg", "bezig", "afgerond"].map((status) => `<button class="btn secondary" type="button" onclick="updatePlanningEvent('${event.id}', 'status', '${status}')">Status: ${status[0].toUpperCase()}${status.slice(1)}</button>`).join("")}
@@ -10344,6 +12371,7 @@ function createWorkorderFromPlanningEvent(eventId) {
   const event = byId(state.planningEvents || [], eventId);
   if (!event || recordCompanyId(event) !== currentCompanyId() || planningMechanicId(event) !== currentUser()?.id) return;
   if (!companySettings().mechanics_can_create_events) return alert("Werkbon maken vanuit planning is uitgeschakeld door Admin.");
+  if (!hasWorkorderPermission("can_create_workorders")) return alert("Je hebt geen rechten om werkbonnen aan te maken.");
   const details = planningEventDetails(event);
   const now = new Date().toISOString();
   const project = {
@@ -11450,7 +13478,7 @@ function removeWorkOrderPhoto(projectId, photoRef) {
 }
 
 function completeProject(projectId) {
-  if (isMechanic() && !hasMechanicPermission("can_close_workorders")) return alert("Je hebt geen recht om werkbonnen af te sluiten.");
+  if (!hasWorkorderPermission("can_close_workorders")) return alert("Je hebt geen recht om werkbonnen af te sluiten.");
   const project = byId(state.projects, projectId);
   if (!project) return alert("Afronden lukt niet: er is geen project geselecteerd.");
   if (!canAccessProject(project)) return alert("Afronden lukt niet: je hebt geen toegang tot dit project.");
@@ -11505,6 +13533,7 @@ function defaultEmailTemplates(companyId = currentCompanyId()) {
     ["Offerte opvolging", "Opvolging offerte", "Beste klant,\n\nGraag horen wij of u nog vragen heeft over onze offerte.\n\nMet vriendelijke groet,"],
     ["Werkbon afgerond", "Werkbon afgerond", "Beste klant,\n\nDe werkzaamheden zijn afgerond. In de bijlage vindt u de werkbon.\n\nMet vriendelijke groet,"],
     ["Betalingsherinnering", "Betalingsherinnering", "Beste klant,\n\nVolgens onze administratie staat er nog een betaling open.\n\nMet vriendelijke groet,"],
+    ["Onderhoudsherinnering", "Onderhoudsherinnering", "Beste klant,\n\nHet is tijd om onderhoud in te plannen. Neem contact met ons op voor een afspraak.\n\nMet vriendelijke groet,"],
     ["Algemene reactie", "Reactie op uw bericht", "Beste klant,\n\nBedankt voor uw bericht.\n\nMet vriendelijke groet,"],
   ].map(([name, subject, body]) => ({
     id: uid("mailtpl"),
@@ -11628,7 +13657,8 @@ function renderEmailPortal() {
   </section>
   ${ui.showMailboxSettings ? renderMailboxSettingsModal() : ""}
   ${ui.emailComposeMode ? renderEmailComposeModal(ui.emailComposeMode, selected) : ""}
-  ${ui.showEmailTemplates ? renderEmailTemplatesPanel() : ""}`;
+  ${ui.showEmailTemplates ? renderEmailTemplatesPanel() : ""}
+  ${ui.emailLinkingMessageId ? renderEmailCustomerLinkModal(ui.emailLinkingMessageId) : ""}`;
 }
 
 function renderMailboxAccounts() {
@@ -11663,6 +13693,9 @@ function renderEmailDetail(message) {
   const customer = message.customer_id ? byId(state.customers || [], message.customer_id) : null;
   const project = message.project_id ? byId(state.projects || [], message.project_id) : null;
   const quote = message.quote_id ? byId(state.quotes || [], message.quote_id) : null;
+  const linkButton = customer
+    ? `<button class="btn secondary" onclick="openEmailCustomerLink('${message.id}')">Gekoppeld aan: ${escapeHtml(customer.customer_name || "-")}</button>`
+    : `<button class="btn secondary" onclick="openEmailCustomerLink('${message.id}')">Koppelen aan klant</button>`;
   return `<article class="email-preview">
     <div class="article-head">
       <div><h2>${escapeHtml(message.subject || "(geen onderwerp)")}</h2><p>${escapeHtml(message.from_name || message.from_email)} - ${escapeHtml(message.from_email || "")}</p></div>
@@ -11678,7 +13711,8 @@ function renderEmailDetail(message) {
     <div class="button-row">
       ${hasEmailPermission("can_reply_email") ? `<button class="btn success" onclick="composeEmail('reply')">Beantwoorden</button><button class="btn secondary" onclick="composeEmail('forward')">Doorsturen</button>` : ""}
       ${hasEmailPermission("can_archive_email") ? `<button class="btn secondary" onclick="archiveEmail('${message.id}')">Archiveren</button>` : ""}
-      ${customer ? `<button class="btn secondary" onclick="linkEmailToCustomer('${message.id}', '${customer.id}')">Koppelen aan klant</button>` : `<button class="btn secondary" onclick="createCustomerFromEmail('${message.id}')">Nieuwe klant aanmaken</button>`}
+      ${linkButton}
+      ${!customer ? `<button class="btn secondary" onclick="createCustomerFromEmail('${message.id}')">Nieuwe klant aanmaken</button>` : ""}
       <button class="btn secondary" onclick="createWorkorderFromEmail('${message.id}')">Werkbon maken</button>
       <button class="btn secondary" onclick="createQuoteFromEmail('${message.id}')">Offerte maken</button>
       <button class="btn secondary" onclick="planAppointmentFromEmail('${message.id}')">Afspraak plannen</button>
@@ -11786,6 +13820,74 @@ function archiveEmail(messageId) {
   render();
 }
 
+function openEmailCustomerLink(messageId) {
+  const message = byId(state.emailMessages || [], messageId);
+  if (!message || !isSameCompany(message)) return;
+  ui.emailLinkingMessageId = messageId;
+  ui.emailCustomerSearch = "";
+  render();
+}
+
+function closeEmailCustomerLink() {
+  ui.emailLinkingMessageId = "";
+  ui.emailCustomerSearch = "";
+  render();
+}
+
+function setEmailCustomerSearch(value) {
+  ui.emailCustomerSearch = value || "";
+  scheduleRender();
+}
+
+function emailCustomerSearchText(customer) {
+  return [
+    customer.customer_name,
+    customer.contact_person,
+    customer.address,
+    customer.postal_code,
+    customer.city,
+    customer.email,
+    customer.phone,
+  ].join(" ").toLowerCase();
+}
+
+function renderEmailCustomerLinkModal(messageId) {
+  const message = byId(state.emailMessages || [], messageId);
+  if (!message || !isSameCompany(message)) return "";
+  const search = String(ui.emailCustomerSearch || "").trim().toLowerCase();
+  const customers = customerScopedRows()
+    .filter((customer) => !search || emailCustomerSearchText(customer).includes(search))
+    .slice(0, 80);
+  const selected = ui.emailSelectedCustomerId || message.customer_id || customers[0]?.id || "";
+  return `<section class="modal-backdrop"><form class="panel confirm-modal customer-link-modal" onsubmit="confirmEmailCustomerLink(event, '${message.id}')">
+    <div class="article-head">
+      <div><h2>Koppelen aan klant</h2><p>${escapeHtml(message.subject || "(geen onderwerp)")}</p></div>
+      <button class="btn secondary" type="button" onclick="closeEmailCustomerLink()">Sluiten</button>
+    </div>
+    <label>Zoek bestaande klant
+      <input value="${escapeAttr(ui.emailCustomerSearch || "")}" placeholder="Naam, adres, e-mail, telefoon of postcode" oninput="setEmailCustomerSearch(this.value)" />
+    </label>
+    <label>Selecteer klant
+      <select name="customer_id" required onchange="ui.emailSelectedCustomerId=this.value">
+        ${customers.map((customer) => `<option value="${customer.id}" ${selected === customer.id ? "selected" : ""}>${escapeHtml(customer.customer_name || "-")} - ${escapeHtml(customer.address || "-")} - ${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.city || "")} - ${escapeHtml(customer.email || customer.phone || "")}</option>`).join("")}
+      </select>
+    </label>
+    ${customers.length ? "" : `<p class="muted">Geen klanten gevonden binnen dit bedrijf.</p>`}
+    <div class="button-row">
+      <button class="btn secondary" type="button" onclick="closeEmailCustomerLink()">Annuleren</button>
+      <button class="btn success" type="submit" ${customers.length ? "" : "disabled"}>Koppel e-mail aan klant</button>
+    </div>
+  </form></section>`;
+}
+
+function confirmEmailCustomerLink(event, messageId) {
+  event.preventDefault();
+  const customerId = String(new FormData(event.target).get("customer_id") || "");
+  if (!customerId) return alert("Selecteer een klant.");
+  linkEmailToCustomer(messageId, customerId);
+  closeEmailCustomerLink();
+}
+
 function createCustomerFromEmail(messageId) {
   const message = byId(state.emailMessages || [], messageId);
   if (!message || !isSameCompany(message)) return;
@@ -11817,9 +13919,29 @@ function createCustomerFromEmail(messageId) {
 
 function linkEmailToCustomer(messageId, customerId) {
   const message = byId(state.emailMessages || [], messageId);
-  if (!message || !isSameCompany(message)) return;
+  const customer = byId(state.customers || [], customerId);
+  if (!message || !customer || !isSameCompany(message) || !isSameCompany(customer)) return;
   message.customer_id = customerId;
-  logEmailAction(messageId, "link_customer", `Gekoppeld aan klant ${customerId}`);
+  message.customer_linked_at = new Date().toISOString();
+  message.customer_linked_by = currentUser()?.id || "";
+  message.attachments = (message.attachments || []).map((attachment) => ({
+    ...attachment,
+    customer_id: customerId,
+    linked_to_customer_at: new Date().toISOString(),
+  }));
+  customer.email_message_ids = Array.from(new Set([...(customer.email_message_ids || []), messageId]));
+  customer.attachments = customer.attachments || [];
+  (message.attachments || []).forEach((attachment) => {
+    customer.attachments.push({
+      ...attachment,
+      id: attachment.id || uid("custatt"),
+      source: "email",
+      message_id: messageId,
+      linked_at: new Date().toISOString(),
+    });
+  });
+  customer.updated_at = new Date().toISOString();
+  logEmailAction(messageId, "link_customer", `Gekoppeld aan klant ${customer.customer_name}`);
   saveState();
   render();
 }
@@ -12033,11 +14155,15 @@ function officeSectionToTab(section = "") {
 }
 
 function renderOfficeSidebar() {
+  const favorites = officeFavoriteItems();
   return `<aside class="office-sidebar">
     <div class="office-sidebar-brand">
       <strong>${escapeHtml(currentCompany()?.name || "Bedrijfsportal")}</strong>
       <span>Kantoor</span>
     </div>
+    ${favorites.length ? `<nav class="office-favorites" aria-label="Favorieten">
+      ${favorites.map(([label, route, icon]) => `<a class="${ui.dashboardTab === label ? "active" : ""}" href="#/admin/${route}" title="${escapeAttr(label)}"><b>★</b><span>${escapeHtml(label)}</span></a>`).join("")}
+    </nav>` : ""}
     <nav class="office-nav">
       ${officeNavItems().map(([label, route, icon]) => `<a class="${ui.dashboardTab === label ? "active" : ""}" href="#/admin/${route}"><b>${icon}</b><span>${label}</span></a>`).join("")}
     </nav>
@@ -12115,7 +14241,7 @@ function renderDashboardTab() {
   if (ui.dashboardTab === "Voorraad") return renderOfficeInventory();
   if (ui.dashboardTab === "Margebeheer") return renderOfficeMarginManagement();
   if (ui.dashboardTab === "Rapportages") return renderOfficeReports();
-  if (ui.dashboardTab === "Instellingen") return `${renderCompanySettings()}${renderChecklistSettings()}`;
+  if (ui.dashboardTab === "Instellingen") return `${renderCompanySettings()}${renderMenuLayoutSettings()}${renderChecklistSettings()}`;
   return renderOfficeDashboard();
 }
 
@@ -12675,11 +14801,13 @@ function renderRoute(route) {
   if (name === "platform") return canAccessPlatformManagement() ? renderPlatform(id) : renderPlatformAccessDenied();
   if (isPlatformSuperAdmin()) return renderPlatform();
   if (name === "admin" || name === "office" || name === "manage") return isCompanyAdmin() ? renderOffice(id) : renderNoOfficeAccess();
-  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment"];
+  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment", "whatsapp", "busvoorraad"];
   if (!mechanicRoutes.includes(name)) return defaultRouteForUser() === "#/admin" ? renderOffice() : renderHome();
   if (!isMechanic()) return renderNoOfficeAccess();
   if (name === "notifications") return renderNotificationsCenter();
   if (name === "call-customer") return canCreateCustomerFromCall() ? renderCallCustomerForm() : renderNoOfficeAccess();
+  if (name === "whatsapp") return canUseWhatsApp() ? renderWhatsAppModule() : renderNoOfficeAccess();
+  if (name === "busvoorraad") return isCompanyModuleActive("van_stock") ? renderMechanicVanStock() : moduleInactiveMessage();
   if (name === "settlement") return renderSettlementPrompt(id);
   if (name === "payment") return renderMechanicPayment(id);
   if (name === "start" && id === "planning") return renderMechanicAgendaPage(sub || "week");
@@ -12707,7 +14835,7 @@ function setPlatformUserCompanyFilter(value) {
 
 function setPlatformUserSearch(value) {
   ui.platformUserSearch = value || "";
-  render();
+  scheduleRender();
 }
 
 function platformManagedUsers() {
@@ -12893,7 +15021,12 @@ function logPlatformAction(action, companyId = "", details = "") {
     company_id: companyId || "",
     company_name: companyId ? byId(state.companies || [], companyId)?.name || companyId : "",
     details,
+    ip_address: platformAdminIpAddress(),
   });
+}
+
+function platformAdminIpAddress() {
+  return "localStorage/browser";
 }
 
 function ensureCompanyPlatformConfig(company) {
@@ -13056,6 +15189,7 @@ function setPlatformTab(tab) {
     Rechten: "permissions",
     Support: "support",
     "Audit Logs": "audit",
+    Systeembeheer: "system-management",
     Systeeminstellingen: "system",
   };
   const route = tabRoutes[tab];
@@ -13064,6 +15198,34 @@ function setPlatformTab(tab) {
     return;
   }
   render();
+}
+
+function platformSidebarItems() {
+  return [
+    ["Overzicht", "overview", "📊"],
+    ["Bedrijven", "companies", "🏢"],
+    ["Gebruikers", "users", "👥"],
+    ["Modules", "modules", "🧩"],
+    ["Abonnementen", "subscriptions", "📦"],
+    ["Facturatie", "billing", "💳"],
+    ["Opslaggebruik", "storage", "💾"],
+    ["Rechten", "permissions", "🔐"],
+    ["Support", "support", "🛟"],
+    ["Audit Logs", "audit", "📋"],
+    ["Systeeminstellingen", "system", "⚙️"],
+  ];
+}
+
+function renderPlatformSidebar() {
+  return `<aside class="office-sidebar platform-sidebar">
+    <div class="office-sidebar-brand">
+      <strong>Platform Admin</strong>
+      <span>WerkbonSysteem.nl</span>
+    </div>
+    <nav class="office-nav platform-nav">
+      ${platformSidebarItems().map(([label, route, icon]) => `<a class="${ui.platformTab === label ? "active" : ""}" href="#/platform/${route}"><b>${icon}</b><span>${escapeHtml(label)}</span></a>`).join("")}
+    </nav>
+  </aside>`;
 }
 
 function renderPlatform(section = "") {
@@ -13079,15 +15241,19 @@ function renderPlatform(section = "") {
     permissions: "Rechten",
     support: "Support",
     audit: "Audit Logs",
+    "system-management": "Systeembeheer",
+    management: "Systeembeheer",
+    advanced: "Systeembeheer",
     system: "Systeeminstellingen",
     settings: "Systeeminstellingen",
   };
   if (section) ui.platformTab = routeTabs[section] || ui.platformTab || "Overzicht";
-  const tabs = ["Overzicht", "Bedrijven", "Gebruikers", "Modules", "Abonnementen", "Facturatie", "Opslaggebruik", "Rechten", "Support", "Audit Logs", "Systeeminstellingen"];
-  return `
-    <div class="tabs">${tabs.map((tab) => `<button class="${ui.platformTab === tab ? "active" : ""}" onclick="setPlatformTab('${tab}')">${tab}</button>`).join("")}</div>
-    ${renderPlatformTab()}
-  `;
+  return `<section class="office-erp-shell platform-admin-shell">
+    ${renderPlatformSidebar()}
+    <main class="office-content platform-content">
+      ${renderPlatformTab()}
+    </main>
+  </section>`;
 }
 
 function renderPlatformTab() {
@@ -13100,6 +15266,7 @@ function renderPlatformTab() {
   if (ui.platformTab === "Rechten") return renderPlatformPermissions();
   if (ui.platformTab === "Support") return renderPlatformSupport();
   if (ui.platformTab === "Audit Logs") return renderPlatformAuditLogs();
+  if (ui.platformTab === "Systeembeheer") return renderPlatformSystemManagement();
   if (ui.platformTab === "Systeeminstellingen") return renderPlatformSystemSettings();
   return renderPlatformOverview();
 }
@@ -13334,27 +15501,577 @@ function renderPlatformSupport() {
 
 function renderPlatformAuditLogs() {
   const logs = platformAuditLogs().slice().reverse();
-  return `<section class="panel"><h2>Audit Logs</h2><div class="table-wrap"><table><thead><tr><th>Datum/tijd</th><th>Gebruiker</th><th>Rol</th><th>Actie</th><th>Bedrijf</th><th>Details</th></tr></thead><tbody>${logs.map((log) => `<tr><td>${escapeHtml(String(log.created_at || "").replace("T", " ").slice(0, 16))}</td><td>${escapeHtml(log.user_name || "-")}</td><td>${escapeHtml(log.role || "-")}</td><td>${escapeHtml(log.action || "-")}</td><td>${escapeHtml(log.company_name || "-")}</td><td>${escapeHtml(log.details || "-")}</td></tr>`).join("")}</tbody></table></div></section>`;
+  return `<section class="panel"><h2>Audit Logs</h2><div class="table-wrap"><table><thead><tr><th>Datum/tijd</th><th>Gebruiker</th><th>Rol</th><th>Actie</th><th>Bedrijf</th><th>IP-adres</th><th>Details</th></tr></thead><tbody>${logs.map((log) => `<tr><td>${escapeHtml(String(log.created_at || "").replace("T", " ").slice(0, 16))}</td><td>${escapeHtml(log.user_name || "-")}</td><td>${escapeHtml(log.role || "-")}</td><td>${escapeHtml(log.action || "-")}</td><td>${escapeHtml(log.company_name || "-")}</td><td>${escapeHtml(log.ip_address || "-")}</td><td>${escapeHtml(log.details || "-")}</td></tr>`).join("")}</tbody></table></div></section>`;
+}
+
+function platformSystemSections() {
+  return ["Algemeen", "E-mail", "Opslag", "Back-ups", "API Koppelingen", "Betalingen", "Beveiliging", "Audit & Logging", "Branding Platform", "Onderhoudsmodus", "Licenties & Modules"];
+}
+
+function platformSystemSectionKey(section) {
+  return slugify(section || "Algemeen").replaceAll("-", "_");
+}
+
+function setPlatformSystemSection(section) {
+  ui.platformSystemSection = section || "Algemeen";
+  render();
+}
+
+function ensurePlatformSettings() {
+  state.platformSettings = {
+    platform_name: "WerkbonSysteem.nl",
+    main_domain: "werkbonsysteem.nl",
+    support_email: "support@werkbonsysteem.nl",
+    support_phone: "",
+    default_language: "nl",
+    timezone: "Europe/Amsterdam",
+    smtp_host: "",
+    smtp_port: 587,
+    smtp_username: "",
+    smtp_from_email: "noreply@werkbonsysteem.nl",
+    microsoft365_enabled: false,
+    gmail_enabled: false,
+    email_templates_enabled: true,
+    storage_local_enabled: true,
+    storage_provider: storageConfig().provider || STORAGE_PROVIDERS.LOCAL,
+    azure_container: storageConfig().azureBlob?.container || "werkbonsysteem-files",
+    supabase_bucket: storageConfig().supabase?.bucket || "werkbonsysteem-files",
+    onedrive_root: storageConfig().oneDriveGraph?.rootFolder || "WerkbonSysteem",
+    default_storage_limit_mb: 1024,
+    max_file_size_mb: 25,
+    daily_backup_enabled: true,
+    weekly_backup_enabled: true,
+    database_backup_enabled: true,
+    files_backup_enabled: true,
+    backup_retention_days: productionConfig().backups?.retentionDays || 30,
+    google_maps_api_key: "",
+    whatsapp_business_api_key: "",
+    wasco_api_key: "",
+    technische_unie_api_key: "",
+    rensa_api_key: "",
+    mollie_api_key: "",
+    stripe_api_key: "",
+    exact_online_enabled: false,
+    twinfield_enabled: false,
+    payment_provider: "manual",
+    direct_debit_enabled: false,
+    subscription_management_enabled: true,
+    payment_reminders_enabled: true,
+    require_2fa: false,
+    password_policy: "minimaal 8 tekens",
+    login_attempt_limit: 5,
+    session_timeout_minutes: 60,
+    ip_whitelist: "",
+    log_retention_days: 365,
+    system_actions_logging: true,
+    user_actions_logging: true,
+    platform_logo_data: "",
+    platform_primary_color: "#08172e",
+    platform_secondary_color: "#d6a73c",
+    login_branding_text: "Loginportaal voor werkbonnen, monteurs, voorraad en bestellingen.",
+    default_email_footer: "Met vriendelijke groet,\nWerkbonSysteem.nl",
+    maintenance_mode: false,
+    maintenance_message: "WerkbonSysteem.nl is tijdelijk in onderhoud.",
+    maintenance_platform_admin_only: true,
+    default_modules_new_companies: "basis",
+    default_user_limit: 10,
+    module_prices_enabled: false,
+    ...(state.platformSettings || {}),
+  };
+  return state.platformSettings;
 }
 
 function renderPlatformSystemSettings() {
-  state.platformSettings = state.platformSettings || { platform_name: "WerkbonSysteem.nl", maintenance_mode: false, default_user_limit: 10, default_storage_limit_mb: 1024 };
-  const settings = state.platformSettings;
-  return `<section class="panel"><h2>Systeeminstellingen</h2><form class="form-grid" onsubmit="savePlatformSettings(event)"><label>Platformnaam <input name="platform_name" value="${escapeAttr(settings.platform_name)}" /></label><label>Standaard gebruikerslimiet <input type="number" name="default_user_limit" min="1" value="${Number(settings.default_user_limit || 10)}" /></label><label>Standaard opslaglimiet MB <input type="number" name="default_storage_limit_mb" min="100" value="${Number(settings.default_storage_limit_mb || 1024)}" /></label><label>Onderhoudsmodus <select name="maintenance_mode"><option value="false">Uit</option><option value="true" ${settings.maintenance_mode ? "selected" : ""}>Aan</option></select></label><button class="btn success" type="submit">Instellingen opslaan</button></form></section>`;
+  if (!isPlatformSuperAdmin()) return renderPlatformAccessDenied();
+  const settings = ensurePlatformSettings();
+  const active = ui.platformSystemSection || "Algemeen";
+  return `<section class="platform-system-settings">
+    <section class="panel rights-intro">
+      <div class="article-head">
+        <div>
+          <h2>⚙️ Systeeminstellingen</h2>
+          <p>Centraal beheer voor algemene instellingen van Werkbonsysteem.nl. Alleen Platform Admin heeft toegang.</p>
+        </div>
+        <span class="badge ok">Platform Admin</span>
+      </div>
+      <div class="system-settings-nav">
+        ${platformSystemSections().map((section) => `<button class="${active === section ? "active" : ""}" type="button" onclick="setPlatformSystemSection('${section}')">${escapeHtml(section)}</button>`).join("")}
+      </div>
+    </section>
+    ${renderPlatformSystemSettingsSection(active, settings)}
+    ${active === "Opslag" || active === "Back-ups" || active === "Audit & Logging" ? renderProductionReadinessSettings() : ""}
+    ${active === "Licenties & Modules" ? renderPlatformDefaultMenuOrderSettings() : ""}
+  </section>`;
 }
 
-function savePlatformSettings(event) {
+function platformInput(name, label, value, type = "text", extra = "") {
+  return `<label>${escapeHtml(label)} <input name="${escapeAttr(name)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? "")}" ${extra} /></label>`;
+}
+
+function platformSelect(name, label, value, options) {
+  return `<label>${escapeHtml(label)} <select name="${escapeAttr(name)}">${options.map(([optionValue, labelText]) => `<option value="${escapeAttr(optionValue)}" ${String(value) === String(optionValue) ? "selected" : ""}>${escapeHtml(labelText)}</option>`).join("")}</select></label>`;
+}
+
+function platformTextarea(name, label, value, rows = 4) {
+  return `<label class="full">${escapeHtml(label)} <textarea name="${escapeAttr(name)}" rows="${rows}">${escapeHtml(value || "")}</textarea></label>`;
+}
+
+function renderPlatformSystemSettingsSection(section, settings) {
+  const yesNo = [["false", "Nee"], ["true", "Ja"]];
+  const body = {
+    Algemeen: `
+      ${platformInput("platform_name", "Platformnaam", settings.platform_name)}
+      ${platformInput("main_domain", "Hoofddomein", settings.main_domain)}
+      ${platformInput("support_email", "Support e-mailadres", settings.support_email, "email")}
+      ${platformInput("support_phone", "Support telefoonnummer", settings.support_phone)}
+      ${platformSelect("default_language", "Standaard taal", settings.default_language, [["nl", "Nederlands"], ["en", "Engels"], ["de", "Duits"]])}
+      ${platformInput("timezone", "Tijdzone", settings.timezone)}
+    `,
+    "E-mail": `
+      ${platformInput("smtp_host", "SMTP host", settings.smtp_host)}
+      ${platformInput("smtp_port", "SMTP poort", settings.smtp_port, "number", "min=\"1\"")}
+      ${platformInput("smtp_username", "SMTP gebruikersnaam", settings.smtp_username)}
+      ${platformInput("smtp_from_email", "Standaard afzender", settings.smtp_from_email, "email")}
+      ${platformSelect("microsoft365_enabled", "Microsoft 365 koppeling", String(Boolean(settings.microsoft365_enabled)), yesNo)}
+      ${platformSelect("gmail_enabled", "Gmail koppeling", String(Boolean(settings.gmail_enabled)), yesNo)}
+      ${platformSelect("email_templates_enabled", "E-mail templates", String(settings.email_templates_enabled !== false), yesNo)}
+    `,
+    Opslag: `
+      ${platformSelect("storage_local_enabled", "Lokale opslag", String(settings.storage_local_enabled !== false), yesNo)}
+      ${platformSelect("storage_provider", "Actieve storage provider", settings.storage_provider, Object.values(STORAGE_PROVIDERS).map((provider) => [provider, provider]))}
+      ${platformInput("azure_container", "Azure Blob Storage container", settings.azure_container)}
+      ${platformInput("supabase_bucket", "Supabase Storage bucket", settings.supabase_bucket)}
+      ${platformInput("onedrive_root", "OneDrive koppeling rootmap", settings.onedrive_root)}
+      ${platformInput("default_storage_limit_mb", "Max opslag per bedrijf MB", settings.default_storage_limit_mb, "number", "min=\"1\"")}
+      ${platformInput("max_file_size_mb", "Max bestandsgrootte MB", settings.max_file_size_mb, "number", "min=\"1\"")}
+    `,
+    "Back-ups": `
+      ${platformSelect("daily_backup_enabled", "Automatische dagelijkse back-up", String(Boolean(settings.daily_backup_enabled)), yesNo)}
+      ${platformSelect("weekly_backup_enabled", "Automatische wekelijkse back-up", String(Boolean(settings.weekly_backup_enabled)), yesNo)}
+      ${platformSelect("database_backup_enabled", "Database back-up", String(Boolean(settings.database_backup_enabled)), yesNo)}
+      ${platformSelect("files_backup_enabled", "Bestanden back-up", String(Boolean(settings.files_backup_enabled)), yesNo)}
+      ${platformInput("backup_retention_days", "Back-up bewaartermijn dagen", settings.backup_retention_days, "number", "min=\"1\"")}
+      <div class="button-row full"><button class="btn secondary" type="button" onclick="createPlatformRestorePoint()">Herstelpunt aanmaken</button><button class="btn ghost" type="button" onclick="downloadPlatformBackup()">Back-up downloaden</button></div>
+    `,
+    "API Koppelingen": `
+      ${platformInput("google_maps_api_key", "Google Maps API key", settings.google_maps_api_key)}
+      ${platformInput("whatsapp_business_api_key", "WhatsApp Business API", settings.whatsapp_business_api_key)}
+      ${platformInput("wasco_api_key", "Wasco API", settings.wasco_api_key)}
+      ${platformInput("technische_unie_api_key", "Technische Unie API", settings.technische_unie_api_key)}
+      ${platformInput("rensa_api_key", "Rensa API", settings.rensa_api_key)}
+      ${platformInput("mollie_api_key", "Mollie API", settings.mollie_api_key)}
+      ${platformInput("stripe_api_key", "Stripe API", settings.stripe_api_key)}
+      ${platformSelect("exact_online_enabled", "Exact Online", String(Boolean(settings.exact_online_enabled)), yesNo)}
+      ${platformSelect("twinfield_enabled", "Twinfield", String(Boolean(settings.twinfield_enabled)), yesNo)}
+    `,
+    Betalingen: `
+      ${platformSelect("payment_provider", "Betaalprovider kiezen", settings.payment_provider, [["manual", "Handmatig"], ["mollie", "Mollie"], ["stripe", "Stripe"]])}
+      ${platformInput("mollie_api_key", "Mollie API key", settings.mollie_api_key)}
+      ${platformInput("stripe_api_key", "Stripe API key", settings.stripe_api_key)}
+      ${platformSelect("direct_debit_enabled", "Automatische incasso", String(Boolean(settings.direct_debit_enabled)), yesNo)}
+      ${platformSelect("subscription_management_enabled", "Abonnementenbeheer", String(settings.subscription_management_enabled !== false), yesNo)}
+      ${platformSelect("payment_reminders_enabled", "Betalingsherinneringen", String(settings.payment_reminders_enabled !== false), yesNo)}
+    `,
+    Beveiliging: `
+      ${platformSelect("require_2fa", "2FA verplicht stellen", String(Boolean(settings.require_2fa)), yesNo)}
+      ${platformInput("password_policy", "Wachtwoordbeleid", settings.password_policy)}
+      ${platformInput("login_attempt_limit", "Inlogpogingen beperken", settings.login_attempt_limit, "number", "min=\"1\"")}
+      ${platformInput("session_timeout_minutes", "Sessietimeout minuten", settings.session_timeout_minutes, "number", "min=\"1\"")}
+      ${platformTextarea("ip_whitelist", "IP whitelist", settings.ip_whitelist, 3)}
+    `,
+    "Audit & Logging": `
+      ${platformInput("log_retention_days", "Log bewaartermijn dagen", settings.log_retention_days, "number", "min=\"1\"")}
+      ${platformSelect("system_actions_logging", "Systeemacties loggen", String(settings.system_actions_logging !== false), yesNo)}
+      ${platformSelect("user_actions_logging", "Gebruikersacties loggen", String(settings.user_actions_logging !== false), yesNo)}
+      <div class="button-row full"><button class="btn secondary" type="button" onclick="downloadPlatformLogs()">Download logs</button></div>
+    `,
+    "Branding Platform": `
+      ${platformInput("platform_logo_data", "Werkbonsysteem.nl logo URL/data", settings.platform_logo_data)}
+      ${platformInput("platform_primary_color", "Platform primaire kleur", settings.platform_primary_color, "color")}
+      ${platformInput("platform_secondary_color", "Platform secundaire kleur", settings.platform_secondary_color, "color")}
+      ${platformInput("login_branding_text", "Loginpagina branding", settings.login_branding_text)}
+      ${platformTextarea("default_email_footer", "Standaard e-mail footer", settings.default_email_footer, 5)}
+    `,
+    Onderhoudsmodus: `
+      ${platformSelect("maintenance_mode", "Systeem in onderhoud zetten", String(Boolean(settings.maintenance_mode)), yesNo)}
+      ${platformTextarea("maintenance_message", "Onderhoudsmelding tonen", settings.maintenance_message, 3)}
+      ${platformSelect("maintenance_platform_admin_only", "Alleen Platform Admin toegang", String(settings.maintenance_platform_admin_only !== false), yesNo)}
+    `,
+    "Licenties & Modules": `
+      ${platformSelect("default_modules_new_companies", "Standaard modules nieuwe bedrijven", settings.default_modules_new_companies, [["basis", "Basis"], ["professional", "Professional"], ["premium", "Premium"]])}
+      ${platformInput("default_user_limit", "Gebruikerslimieten standaard", settings.default_user_limit, "number", "min=\"1\"")}
+      ${platformInput("default_storage_limit_mb", "Opslaglimieten standaard MB", settings.default_storage_limit_mb, "number", "min=\"1\"")}
+      ${platformSelect("module_prices_enabled", "Module prijzen", String(Boolean(settings.module_prices_enabled)), yesNo)}
+      <p class="muted full">Pakketinstellingen en moduleprijzen zijn voorbereid; module activatie per bedrijf gebeurt onder Platform Admin → Modules.</p>
+    `,
+  }[section] || "";
+  const critical = ["Betalingen", "Beveiliging", "Onderhoudsmodus", "API Koppelingen"].includes(section);
+  return `<section class="panel">
+    <div class="article-head">
+      <div><h2>${escapeHtml(section)}</h2><p>${critical ? "Kritische instellingen vereisen extra bevestiging bij opslaan." : "Algemene platforminstellingen voor Werkbonsysteem.nl."}</p></div>
+      ${critical ? `<span class="badge warn">Kritisch</span>` : `<span class="badge">Instellingen</span>`}
+    </div>
+    <form class="form-grid" onsubmit="savePlatformSystemSettings(event, '${section}')">
+      ${body}
+      <button class="btn success" type="submit">Instellingen opslaan</button>
+    </form>
+  </section>`;
+}
+
+function savePlatformSystemSettings(event, section) {
   event.preventDefault();
-  if (!isPlatformSuperAdmin()) return;
+  if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
+  const critical = ["Betalingen", "Beveiliging", "Onderhoudsmodus", "API Koppelingen"].includes(section);
+  if (critical && !confirm(`Bevestig wijziging van kritische systeeminstellingen: ${section}.`)) return;
   const form = new FormData(event.target);
-  state.platformSettings = {
-    platform_name: String(form.get("platform_name") || "WerkbonSysteem.nl"),
-    default_user_limit: Number(form.get("default_user_limit") || 10),
-    default_storage_limit_mb: Number(form.get("default_storage_limit_mb") || 1024),
-    maintenance_mode: form.get("maintenance_mode") === "true",
+  const settings = ensurePlatformSettings();
+  for (const [key, value] of form.entries()) {
+    if (["true", "false"].includes(String(value))) settings[key] = value === "true";
+    else if (["smtp_port", "default_storage_limit_mb", "max_file_size_mb", "backup_retention_days", "login_attempt_limit", "session_timeout_minutes", "log_retention_days", "default_user_limit"].includes(key)) settings[key] = Number(value || 0);
+    else settings[key] = String(value || "");
+  }
+  state.storageConfig = {
+    ...storageConfig(),
+    provider: settings.storage_provider || storageConfig().provider,
+    supabase: { ...storageConfig().supabase, bucket: settings.supabase_bucket || "werkbonsysteem-files" },
+    azureBlob: { ...storageConfig().azureBlob, container: settings.azure_container || "werkbonsysteem-files" },
+    oneDriveGraph: { ...storageConfig().oneDriveGraph, rootFolder: settings.onedrive_root || "WerkbonSysteem" },
   };
-  logPlatformAction("platforminstellingen aangepast", "", "Systeeminstellingen");
+  state.productionConfig = {
+    ...productionConfig(),
+    backups: {
+      ...productionConfig().backups,
+      enabled: Boolean(settings.daily_backup_enabled || settings.weekly_backup_enabled),
+      frequency: settings.daily_backup_enabled ? "daily" : "weekly",
+      retentionDays: Number(settings.backup_retention_days || productionConfig().backups.retentionDays || 30),
+    },
+    auditlog: {
+      ...productionConfig().auditlog,
+      enabled: settings.system_actions_logging !== false,
+      retentionDays: Number(settings.log_retention_days || 365),
+    },
+  };
+  logPlatformAction("systeeminstellingen aangepast", "", section);
   saveState();
+  render();
+}
+
+function createPlatformRestorePoint() {
+  if (!isPlatformSuperAdmin()) return;
+  state.backupJobs = state.backupJobs || [];
+  state.backupJobs.push({ id: uid("backup"), company_id: PLATFORM_COMPANY_ID, companyId: PLATFORM_COMPANY_ID, type: "restore_point", status: "created", created_by: currentUser()?.id || "", created_at: new Date().toISOString() });
+  logPlatformAction("herstelpunt aangemaakt", "", "Systeeminstellingen");
+  saveState();
+  alert("Herstelpunt aangemaakt.");
+  render();
+}
+
+function downloadPlatformBackup() {
+  if (!isPlatformSuperAdmin()) return;
+  downloadJson(state, `werkbonsysteem-backup-${new Date().toISOString().slice(0, 10)}.json`);
+  logPlatformAction("backup gedownload", "", "Systeeminstellingen");
+  saveState();
+}
+
+function downloadPlatformLogs() {
+  if (!isPlatformSuperAdmin()) return;
+  downloadJson(platformAuditLogs(), `werkbonsysteem-auditlogs-${new Date().toISOString().slice(0, 10)}.json`);
+  logPlatformAction("auditlogs gedownload", "", "Systeeminstellingen");
+  saveState();
+}
+
+function renderProductionReadinessSettings() {
+  const storage = storageConfig();
+  const prod = productionConfig();
+  const fileCount = (state.files || []).filter((file) => !file.deleted).length;
+  const localObjectCount = (state.fileStorageObjects || []).length;
+  return `<section class="panel production-readiness">
+    <div class="article-head">
+      <div>
+        <h2>Productie/server voorbereiding</h2>
+        <p>Tenant-scheiding, PostgreSQL, storage providers, backups en auditlog zijn voorbereid voor migratie naar servergebruik.</p>
+      </div>
+      <span class="badge ok">${fileCount} bestandsmetadata</span>
+    </div>
+    <form class="form-grid" onsubmit="saveProductionReadinessSettings(event)">
+      <label>Storage provider
+        <select name="storage_provider">
+          ${Object.values(STORAGE_PROVIDERS).map((provider) => `<option value="${provider}" ${storage.provider === provider ? "selected" : ""}>${provider}</option>`).join("")}
+        </select>
+      </label>
+      <label>Supabase bucket <input name="supabase_bucket" value="${escapeAttr(storage.supabase?.bucket || "werkbonsysteem-files")}" /></label>
+      <label>Azure container <input name="azure_container" value="${escapeAttr(storage.azureBlob?.container || "werkbonsysteem-files")}" /></label>
+      <label>OneDrive root folder <input name="onedrive_root" value="${escapeAttr(storage.oneDriveGraph?.rootFolder || "WerkbonSysteem")}" /></label>
+      <label>Database provider <input name="database_provider" value="${escapeAttr(prod.database.provider || "postgresql")}" /></label>
+      <label>Tenant kolom <input name="tenant_column" value="${escapeAttr(prod.database.tenantColumn || "companyId")}" /></label>
+      <label>Backups <select name="backups_enabled"><option value="true" ${prod.backups.enabled ? "selected" : ""}>Aan</option><option value="false" ${!prod.backups.enabled ? "selected" : ""}>Uit</option></select></label>
+      <label>Backup frequentie <select name="backup_frequency"><option value="daily" ${prod.backups.frequency === "daily" ? "selected" : ""}>Dagelijks</option><option value="weekly" ${prod.backups.frequency === "weekly" ? "selected" : ""}>Wekelijks</option></select></label>
+      <label>Retentie dagen <input name="retention_days" type="number" min="1" value="${Number(prod.backups.retentionDays || 30)}" /></label>
+      <label>Auditlog <select name="auditlog_enabled"><option value="true" ${prod.auditlog.enabled ? "selected" : ""}>Aan</option><option value="false" ${!prod.auditlog.enabled ? "selected" : ""}>Uit</option></select></label>
+      <button class="btn success" type="submit">Productie-instellingen opslaan</button>
+    </form>
+    <section class="meta-grid" style="margin-top:12px">
+      <div class="meta"><span>Bestandspad</span><strong>companyId/module/entityId/bestandsnaam</strong></div>
+      <div class="meta"><span>Database opslag</span><strong>Alleen metadata; lokale payloads zitten in dev storage objecten</strong></div>
+      <div class="meta"><span>Lokale dev objecten</span><strong>${localObjectCount}</strong></div>
+      <div class="meta"><span>Veilige verwijdering</span><strong>Alleen Platform Admin voor destructieve reset</strong></div>
+    </section>
+  </section>`;
+}
+
+function saveProductionReadinessSettings(event) {
+  event.preventDefault();
+  if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
+  const form = new FormData(event.target);
+  state.storageConfig = {
+    ...storageConfig(),
+    provider: String(form.get("storage_provider") || STORAGE_PROVIDERS.LOCAL),
+    supabase: { ...storageConfig().supabase, bucket: String(form.get("supabase_bucket") || "werkbonsysteem-files") },
+    azureBlob: { ...storageConfig().azureBlob, container: String(form.get("azure_container") || "werkbonsysteem-files") },
+    oneDriveGraph: { ...storageConfig().oneDriveGraph, rootFolder: String(form.get("onedrive_root") || "WerkbonSysteem") },
+  };
+  state.productionConfig = {
+    ...productionConfig(),
+    database: {
+      ...productionConfig().database,
+      provider: String(form.get("database_provider") || "postgresql"),
+      tenantColumn: String(form.get("tenant_column") || "companyId"),
+      supabaseReady: true,
+      rlsPrepared: true,
+    },
+    backups: {
+      ...productionConfig().backups,
+      enabled: form.get("backups_enabled") === "true",
+      frequency: String(form.get("backup_frequency") || "daily"),
+      retentionDays: Number(form.get("retention_days") || 30),
+    },
+    auditlog: {
+      ...productionConfig().auditlog,
+      enabled: form.get("auditlog_enabled") === "true",
+    },
+  };
+  logPlatformAction("productie-instellingen aangepast", "", `storage=${state.storageConfig.provider}, database=${state.productionConfig.database.provider}`);
+  saveState();
+  alert("Productie/server instellingen opgeslagen.");
+  render();
+}
+
+function platformDefaultMenuText(roleKey) {
+  state.platformSettings = state.platformSettings || {};
+  state.platformSettings.default_menu_order = state.platformSettings.default_menu_order || {};
+  const order = state.platformSettings.default_menu_order[roleKey] || defaultMenuOrder(roleKey);
+  return order.join("\n");
+}
+
+function renderPlatformDefaultMenuOrderSettings() {
+  return `<section class="panel menu-layout-settings">
+    <div class="article-head">
+      <div>
+        <h2>Standaard menuvolgorde nieuwe bedrijven</h2>
+        <p>Platform Admin kan hier de standaardvolgorde instellen. Bedrijven kunnen daarna hun eigen volgorde beheren.</p>
+      </div>
+    </div>
+    <form class="form-grid" onsubmit="savePlatformDefaultMenuOrder(event)">
+      <label>Company Admin volgorde <textarea name="company_admin" rows="10">${escapeHtml(platformDefaultMenuText("company_admin"))}</textarea></label>
+      <label>Kantoor volgorde <textarea name="office" rows="10">${escapeHtml(platformDefaultMenuText("office"))}</textarea></label>
+      <label>Monteur volgorde <textarea name="mechanic" rows="10">${escapeHtml(platformDefaultMenuText("mechanic"))}</textarea></label>
+      <button class="btn success" type="submit">Standaardvolgorde opslaan</button>
+    </form>
+  </section>`;
+}
+
+function savePlatformDefaultMenuOrder(event) {
+  event.preventDefault();
+  if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
+  const form = new FormData(event.target);
+  state.platformSettings = state.platformSettings || {};
+  state.platformSettings.default_menu_order = state.platformSettings.default_menu_order || {};
+  ["company_admin", "office", "mechanic"].forEach((roleKey) => {
+    const valid = defaultOfficeNavItems().map(([label]) => label);
+    const order = String(form.get(roleKey) || "")
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter((item, index, arr) => item && valid.includes(item) && arr.indexOf(item) === index);
+    state.platformSettings.default_menu_order[roleKey] = order.length ? order : defaultMenuOrder(roleKey);
+  });
+  logPlatformAction("standaard menuvolgorde aangepast", "", "Systeeminstellingen");
+  saveState();
+  alert("Standaard menuvolgorde opgeslagen.");
+  render();
+}
+
+function cancelPlatformDataReset() {
+  ui.platformResetStep = 0;
+  ui.platformResetConfirmText = "";
+  render();
+}
+
+function setPlatformResetStep(step) {
+  if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
+  ui.platformResetStep = Number(step) || 1;
+  if (ui.platformResetStep < 2) ui.platformResetConfirmText = "";
+  render();
+}
+
+function setPlatformResetConfirmText(value) {
+  ui.platformResetConfirmText = String(value || "");
+  render();
+}
+
+function renderPlatformSystemManagement() {
+  if (!isPlatformSuperAdmin()) return renderPlatformAccessDenied();
+  const step = Number(ui.platformResetStep || 0);
+  return `<section class="platform-system-management">
+    <section class="panel">
+      <div class="article-head">
+        <div>
+          <h2>Systeembeheer</h2>
+          <p>Geavanceerde platformacties. Deze pagina is alleen beschikbaar voor Platform Admin.</p>
+        </div>
+        <span class="badge danger">Platform Admin only</span>
+      </div>
+    </section>
+    <section class="panel danger-zone">
+      <div class="article-head">
+        <div>
+          <h2>Geavanceerd</h2>
+          <p>Permanent verwijderen van alle lokale SaaS-data is afgeschermd met drie verplichte stappen.</p>
+        </div>
+      </div>
+      ${step ? renderPlatformResetStep(step) : renderPlatformResetClosed()}
+    </section>
+  </section>`;
+}
+
+function renderPlatformResetClosed() {
+  return `<div class="danger-action">
+    <div>
+      <strong>Alle lokale platformdata verwijderen</strong>
+      <p class="muted">Alleen gebruiken wanneer het volledige localStorage-platform bewust leeg gemaakt moet worden.</p>
+    </div>
+    <button class="btn danger" type="button" onclick="setPlatformResetStep(1)">Resetprocedure starten</button>
+  </div>`;
+}
+
+function renderPlatformResetStep(step) {
+  if (step === 1) {
+    return `<div class="reset-flow">
+      <div class="reset-step active">Stap 1 van 3</div>
+      <div class="warning-block"><strong>LET OP:</strong><br>U staat op het punt alle bedrijfsgegevens, klanten, werkbonnen, offertes, facturen, foto's, documenten en instellingen permanent te verwijderen.<br>Deze actie kan niet ongedaan worden gemaakt.</div>
+      <div class="button-row">
+        <button class="btn secondary" type="button" onclick="cancelPlatformDataReset()">Annuleren</button>
+        <button class="btn danger" type="button" onclick="setPlatformResetStep(2)">Ik begrijp dit</button>
+      </div>
+    </div>`;
+  }
+  if (step === 2) {
+    const phrase = "VERWIJDER ALLE DATA";
+    const typed = String(ui.platformResetConfirmText || "");
+    const enabled = typed === phrase;
+    return `<div class="reset-flow">
+      <div class="reset-step active">Stap 2 van 3</div>
+      <div class="warning-block severe"><strong>LAATSTE WAARSCHUWING</strong><br><br>Alle data van alle bedrijven zal permanent worden verwijderd.<br><br>Dit omvat:<br>- Klanten<br>- Werkbonnen<br>- Offertes<br>- Facturen<br>- Foto's<br>- Documenten<br>- Planning<br>- Gebruikers<br>- Toestellendatabase<br><br>Na bevestiging is herstel niet mogelijk.</div>
+      <label>Typ exact: <strong>${phrase}</strong>
+        <input value="${escapeAttr(typed)}" oninput="setPlatformResetConfirmText(this.value)" autocomplete="off" />
+      </label>
+      <div class="button-row">
+        <button class="btn secondary" type="button" onclick="cancelPlatformDataReset()">Annuleren</button>
+        <button class="btn danger" type="button" ${enabled ? "" : "disabled"} onclick="setPlatformResetStep(3)">Volgende</button>
+      </div>
+    </div>`;
+  }
+  return `<form class="reset-flow" onsubmit="deleteAllPlatformData(event)">
+    <div class="reset-step active">Stap 3 van 3</div>
+    <label>Platform Admin wachtwoord opnieuw invoeren
+      <input type="password" name="password" required autocomplete="current-password" />
+    </label>
+    <label>2FA verificatiecode optioneel
+      <input name="two_factor_code" inputmode="numeric" pattern="[0-9]{6}" placeholder="6 cijfers indien ingesteld" />
+    </label>
+    <div class="button-row">
+      <button class="btn secondary" type="button" onclick="cancelPlatformDataReset()">Annuleren</button>
+      <button class="btn danger" type="submit">Definitief verwijderen</button>
+    </div>
+  </form>`;
+}
+
+function emptyPlatformDataState(adminUser, auditEntry) {
+  return {
+    platformDataWiped: true,
+    companies: [],
+    kits: [],
+    articles: [],
+    garageArticles: [],
+    projects: [],
+    usages: [],
+    orderLines: [],
+    quotes: [],
+    quoteLines: [],
+    payments: [],
+    pricing_categories: [],
+    emailAccounts: [],
+    emailMessages: [],
+    emailTemplates: [],
+    emailAuditLogs: [],
+    whatsappAccounts: [],
+    whatsappConversations: [],
+    whatsappMessages: [],
+    whatsappTemplates: [],
+    whatsappAuditLogs: [],
+    hourlyRates: [],
+    profitSnapshots: [],
+    maintenanceContracts: [],
+    planningEvents: [],
+    notifications: [],
+    customerNotes: [],
+    appliances: [],
+    customers: [],
+    locations: [],
+    settings: {},
+    users: [adminUser],
+    session: { userId: adminUser.id },
+    platformAuditLogs: [auditEntry],
+    platformSettings: { platform_name: "WerkbonSysteem.nl", maintenance_mode: false, default_user_limit: 10, default_storage_limit_mb: 1024 },
+  };
+}
+
+function deleteAllPlatformData(event) {
+  event.preventDefault();
+  if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
+  if (String(ui.platformResetConfirmText || "") !== "VERWIJDER ALLE DATA") return alert("Bevestigingstekst ontbreekt.");
+  const form = new FormData(event.target);
+  const user = currentUser();
+  const password = String(form.get("password") || "");
+  const twoFactorCode = String(form.get("two_factor_code") || "").trim();
+  if (!user || password !== String(user.password || "")) {
+    alert("Platform Admin wachtwoord is onjuist.");
+    return;
+  }
+  if (twoFactorCode && !/^[0-9]{6}$/.test(twoFactorCode)) {
+    alert("2FA verificatiecode moet uit 6 cijfers bestaan.");
+    return;
+  }
+  const now = new Date().toISOString();
+  const adminUser = { ...user, role: ROLES.PLATFORM_ADMIN, company_id: null, companyId: null, active: true, deleted: false };
+  const auditEntry = {
+    id: uid("audit"),
+    created_at: now,
+    user_id: adminUser.id,
+    user_name: adminUser.name || adminUser.email || "Platform Admin",
+    role: ROLES.PLATFORM_ADMIN,
+    action: "alle data definitief verwijderd",
+    company_id: "",
+    company_name: "Platform",
+    ip_address: platformAdminIpAddress(),
+    details: "Alle bedrijfsgegevens, klanten, werkbonnen, offertes, facturen, foto's, documenten, planning, gebruikers en toestellendatabase verwijderd.",
+  };
+  state = emptyPlatformDataState(adminUser, auditEntry);
+  ui.platformTab = "Systeembeheer";
+  ui.platformResetStep = 0;
+  ui.platformResetConfirmText = "";
+  saveState();
+  alert("Alle lokale platformdata is verwijderd. Alleen het Platform Admin-account en deze auditlog zijn behouden.");
+  location.hash = "#/platform/system-management";
   render();
 }
 
@@ -13363,6 +16080,7 @@ function renderRoute(route) {
   if (name === "login") return renderLogin();
   if (!currentUser()) return renderLogin();
   if (name === "platform") return canAccessPlatformManagement() ? renderPlatform(id) : renderPlatformAccessDenied();
+  if (platformMaintenanceBlocks()) return renderPlatformMaintenanceNotice();
   if (name === "agenda" || name === "calendar") {
     location.hash = isMechanic() ? "#/start/planning" : "#/admin/planning";
     return "";
@@ -13379,16 +16097,21 @@ function renderRoute(route) {
     if (moduleKey && !isCompanyModuleActive(moduleKey)) return moduleInactiveMessage();
     return renderOffice(id);
   }
-  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment"];
+  const mechanicRoutes = ["start", "new", "active", "completed", "project", "summary", "notifications", "call-customer", "settlement", "payment", "whatsapp"];
   if (!mechanicRoutes.includes(name)) return defaultRouteForUser() === "#/admin" ? renderOffice() : renderHome();
   if (!isMechanic()) return renderNoOfficeAccess();
   if (name === "notifications") return renderNotificationsCenter();
   if (name === "call-customer") return canCreateCustomerFromCall() ? renderCallCustomerForm() : renderNoOfficeAccess();
+  if (name === "whatsapp") return canUseWhatsApp() ? renderWhatsAppModule() : renderNoOfficeAccess();
   if (name === "settlement") return renderSettlementPrompt(id);
   if (name === "payment") return renderMechanicPayment(id);
   if (name === "start" && id === "planning") return isCompanyModuleActive("planning") ? renderMechanicAgendaPage(sub || "week") : moduleInactiveMessage();
   if (name === "start") return renderHome();
-  if (name === "new") return isCompanyModuleActive("workorders") ? renderNewProject() : moduleInactiveMessage();
+  if (name === "new") {
+    if (!isCompanyModuleActive("workorders")) return moduleInactiveMessage();
+    if (!hasWorkorderPermission("can_create_workorders")) return `<div class="panel empty">Je hebt geen rechten om werkbonnen aan te maken.</div>`;
+    return renderNewProject();
+  }
   if (name === "active") return isCompanyModuleActive("workorders") ? renderProjectList("Open") : moduleInactiveMessage();
   if (name === "completed") return isCompanyModuleActive("workorders") ? renderProjectList("Afgerond") : moduleInactiveMessage();
   if (name === "project") return isCompanyModuleActive("workorders") ? renderTechnician(id) : moduleInactiveMessage();
@@ -13440,6 +16163,7 @@ const MODULE_CATALOG = [
   ["reports", "Rapportages", "Professional", "Rapportages, exports en operationele overzichten.", ["workorders"]],
   ["inventory", "Voorraadbeheer", "Premium", "Artikelen, voorraadstanden en voorraadwaarde beheren.", []],
   ["warehouse", "Magazijn", "Premium", "Centraal magazijn beheren. Garage Box heet voortaan Magazijn.", ["inventory"]],
+  ["van_stock", "Busvoorraad", "Premium", "Digitale busvoorraad per monteur met afboeken, inventarisatie en besteladviezen.", ["inventory", "warehouse"]],
   ["kits", "Koffers", "Premium", "Koffers zoals M001 en M004 beheren en aanvullen.", ["inventory", "warehouse"]],
   ["ordering", "Bestellen", "Premium", "Bestellijsten, bestelstatussen en ontvangen artikelen beheren.", ["inventory"]],
   ["wasco", "Wasco koppeling", "Premium", "Wasco artikel-ID's en conceptbestellingen voorbereiden.", ["ordering", "inventory"]],
@@ -13605,10 +16329,17 @@ function renderPlatformModules() {
 }
 
 function officeNavItems() {
-  const items = [
+  const items = defaultOfficeNavItems();
+  const activeItems = items.filter(([, , , moduleKey]) => !moduleKey || isCompanyModuleActive(moduleKey));
+  return sortMenuItemsForRole(activeItems, currentMenuRoleKey());
+}
+
+function defaultOfficeNavItems() {
+  return [
     ["Dashboard", "dashboard", "D", ""],
     ["Projecten", "projects", "P", "workorders"],
     ["Werkbonnen", "workorders", "W", "workorders"],
+    ["Toestellendatabase", "appliances", "T", "workorders"],
     ["Planning", "planning", "P", "planning"],
     ["Klanten", "customers", "K", "customers"],
     ["Offertes", "quotes", "O", "quotes"],
@@ -13617,6 +16348,7 @@ function officeNavItems() {
     ["Rapportages", "reports", "R", "reports"],
     ["Voorraad", "inventory", "V", "inventory"],
     ["Magazijn", "warehouse", "M", "warehouse"],
+    ["Busvoorraad", "van-stock", "B", "van_stock"],
     ["Koffers", "kits", "K", "kits"],
     ["Bestellen", "orders", "B", "ordering"],
     ["Wasco", "wasco", "W", "wasco"],
@@ -13629,7 +16361,194 @@ function officeNavItems() {
     ["Gebruikers", "users", "G", ""],
     ["Instellingen", "settings", "I", ""],
   ];
-  return items.filter(([, , , moduleKey]) => !moduleKey || isCompanyModuleActive(moduleKey));
+}
+
+function defaultMenuOrder(roleKey = "company_admin") {
+  const platformDefault = state.platformSettings?.default_menu_order?.[roleKey];
+  if (Array.isArray(platformDefault) && platformDefault.length) return platformDefault.slice();
+  if (roleKey === "mechanic") return ["Planning", "Werkbonnen", "Klanten", "Busvoorraad", "Toestellendatabase"];
+  return defaultOfficeNavItems().map(([label]) => label);
+}
+
+function currentMenuRoleKey() {
+  const role = userRole(currentUser());
+  if (role === ROLES.MECHANIC) return "mechanic";
+  if (role === ROLES.COMPANY_ADMIN) return "company_admin";
+  return "office";
+}
+
+function companyMenuLayouts(company = currentCompany()) {
+  if (!company) return {};
+  company.menu_layouts = company.menu_layouts || company.settings?.menu_layouts || {};
+  company.settings = company.settings || {};
+  company.settings.menu_layouts = company.menu_layouts;
+  return company.menu_layouts;
+}
+
+function companyMenuFavorites(company = currentCompany()) {
+  if (!company) return {};
+  company.menu_favorites = company.menu_favorites || company.settings?.menu_favorites || {};
+  company.settings = company.settings || {};
+  company.settings.menu_favorites = company.menu_favorites;
+  return company.menu_favorites;
+}
+
+function normalizeMenuOrderForActiveItems(order, activeItems, roleKey) {
+  const activeLabels = activeItems.map(([label]) => label);
+  const source = Array.isArray(order) && order.length ? order : defaultMenuOrder(roleKey);
+  const normalized = source.filter((label, index, arr) => activeLabels.includes(label) && arr.indexOf(label) === index);
+  activeLabels.forEach((label) => {
+    if (!normalized.includes(label)) normalized.push(label);
+  });
+  return normalized;
+}
+
+function sortMenuItemsForRole(items, roleKey) {
+  const company = currentCompany();
+  const layouts = companyMenuLayouts(company);
+  const order = normalizeMenuOrderForActiveItems(layouts[roleKey], items, roleKey);
+  return order.map((label) => items.find(([itemLabel]) => itemLabel === label)).filter(Boolean);
+}
+
+function activeMenuItemsForRole(roleKey) {
+  const items = defaultOfficeNavItems().filter(([, , , moduleKey]) => !moduleKey || isCompanyModuleActive(moduleKey));
+  return sortMenuItemsForRole(items, roleKey);
+}
+
+function officeFavoriteLabels() {
+  const user = currentUser();
+  if (!user) return [];
+  user.menu_favorites = Array.isArray(user.menu_favorites) ? user.menu_favorites : [];
+  return user.menu_favorites;
+}
+
+function officeFavoriteItems() {
+  const favorites = officeFavoriteLabels();
+  if (!favorites.length) return [];
+  const active = activeMenuItemsForRole(currentMenuRoleKey());
+  return favorites.map((label) => active.find(([itemLabel]) => itemLabel === label)).filter(Boolean);
+}
+
+function setUserMenuFavorite(label, enabled) {
+  const user = currentUser();
+  if (!user) return;
+  const activeLabels = activeMenuItemsForRole(currentMenuRoleKey()).map(([itemLabel]) => itemLabel);
+  if (!activeLabels.includes(label)) return;
+  user.menu_favorites = officeFavoriteLabels().filter((item) => item !== label);
+  if (enabled) user.menu_favorites.push(label);
+  user.updated_at = new Date().toISOString();
+  saveState();
+  render();
+}
+
+function menuLayoutDrafts() {
+  ui.menuLayoutDrafts = ui.menuLayoutDrafts || {};
+  return ui.menuLayoutDrafts;
+}
+
+function menuLayoutDraft(roleKey) {
+  const company = currentCompany();
+  const activeItems = defaultOfficeNavItems().filter(([, , , moduleKey]) => !moduleKey || isCompanyModuleActive(moduleKey));
+  const layouts = companyMenuLayouts(company);
+  const drafts = menuLayoutDrafts();
+  const draftKey = `${currentCompanyId() || "platform"}:${roleKey}`;
+  if (!Array.isArray(drafts[draftKey])) {
+    drafts[draftKey] = normalizeMenuOrderForActiveItems(layouts[roleKey], activeItems, roleKey);
+  } else {
+    drafts[draftKey] = normalizeMenuOrderForActiveItems(drafts[draftKey], activeItems, roleKey);
+  }
+  return drafts[draftKey];
+}
+
+function moveMenuLayoutItem(roleKey, label, direction) {
+  const draft = menuLayoutDraft(roleKey);
+  const index = draft.indexOf(label);
+  const nextIndex = index + Number(direction || 0);
+  if (index < 0 || nextIndex < 0 || nextIndex >= draft.length) return;
+  draft.splice(index, 1);
+  draft.splice(nextIndex, 0, label);
+  render();
+}
+
+function dragMenuLayoutStart(event, roleKey, label) {
+  ui.menuDrag = { roleKey, label };
+  if (event?.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", label);
+  }
+}
+
+function dropMenuLayoutItem(event, roleKey, targetLabel) {
+  event?.preventDefault?.();
+  const sourceLabel = ui.menuDrag?.label || event?.dataTransfer?.getData("text/plain");
+  if (!sourceLabel || sourceLabel === targetLabel) return;
+  const draft = menuLayoutDraft(roleKey);
+  const sourceIndex = draft.indexOf(sourceLabel);
+  const targetIndex = draft.indexOf(targetLabel);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  draft.splice(sourceIndex, 1);
+  draft.splice(targetIndex, 0, sourceLabel);
+  ui.menuDrag = null;
+  render();
+}
+
+function saveMenuLayout(roleKey) {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return alert("Geen toegang.");
+  const company = currentCompany();
+  if (!company) return alert("Geen bedrijf gevonden.");
+  const layouts = companyMenuLayouts(company);
+  layouts[roleKey] = menuLayoutDraft(roleKey).slice();
+  company.updated_at = new Date().toISOString();
+  saveState();
+  alert("Menuvolgorde opgeslagen.");
+  render();
+}
+
+function resetMenuLayout(roleKey) {
+  const company = currentCompany();
+  const layouts = companyMenuLayouts(company);
+  delete layouts[roleKey];
+  const draftKey = `${currentCompanyId() || "platform"}:${roleKey}`;
+  delete menuLayoutDrafts()[draftKey];
+  saveState();
+  render();
+}
+
+function renderMenuLayoutRole(roleKey, title) {
+  const draft = menuLayoutDraft(roleKey);
+  const favorites = officeFavoriteLabels();
+  return `<section class="panel subtle-panel menu-layout-role">
+    <div class="article-head">
+      <div><h3>${escapeHtml(title)}</h3><p>Alleen actieve modules zijn sorteerbaar. Nieuwe modules komen automatisch onderaan.</p></div>
+      <div class="button-row">
+        <button class="btn secondary" type="button" onclick="resetMenuLayout('${roleKey}')">Reset naar standaardvolgorde</button>
+        <button class="btn success" type="button" onclick="saveMenuLayout('${roleKey}')">Volgorde opslaan</button>
+      </div>
+    </div>
+    <div class="menu-sort-list">
+      ${draft.map((label, index) => `<div class="menu-sort-row" draggable="true" ondragstart="dragMenuLayoutStart(event, '${roleKey}', '${escapeAttr(label)}')" ondragover="event.preventDefault()" ondrop="dropMenuLayoutItem(event, '${roleKey}', '${escapeAttr(label)}')">
+        <span class="drag-handle">☰</span>
+        <strong>${escapeHtml(label)}</strong>
+        <label class="menu-favorite-toggle"><input type="checkbox" ${favorites.includes(label) ? "checked" : ""} onchange="setUserMenuFavorite('${escapeAttr(label)}', this.checked)" /> Favoriet</label>
+        <button class="btn secondary" type="button" ${index === 0 ? "disabled" : ""} onclick="moveMenuLayoutItem('${roleKey}', '${escapeAttr(label)}', -1)">Omhoog</button>
+        <button class="btn secondary" type="button" ${index === draft.length - 1 ? "disabled" : ""} onclick="moveMenuLayoutItem('${roleKey}', '${escapeAttr(label)}', 1)">Omlaag</button>
+      </div>`).join("")}
+    </div>
+  </section>`;
+}
+
+function renderMenuLayoutSettings() {
+  return `<section class="panel menu-layout-settings">
+    <div class="article-head">
+      <div>
+        <h2>Menu-indeling</h2>
+        <p>Bepaal per rol de volgorde van actieve modules in het linker menu. Favorieten verschijnen bovenaan als snelle toegang.</p>
+      </div>
+    </div>
+    ${renderMenuLayoutRole("company_admin", "Company Admin")}
+    ${renderMenuLayoutRole("office", "Kantoor")}
+    ${renderMenuLayoutRole("mechanic", "Monteur")}
+  </section>`;
 }
 
 function officeSectionToTab(section = "") {
@@ -13637,6 +16556,7 @@ function officeSectionToTab(section = "") {
     dashboard: "Dashboard",
     projects: "Projecten",
     workorders: "Werkbonnen",
+    appliances: "Toestellendatabase",
     planning: "Planning",
     agenda: "Planning",
     calendar: "Planning",
@@ -13649,6 +16569,8 @@ function officeSectionToTab(section = "") {
     inventory: "Voorraad",
     warehouse: "Magazijn",
     "garage-box": "Magazijn",
+    "van-stock": "Busvoorraad",
+    busvoorraad: "Busvoorraad",
     kits: "Koffers",
     orders: "Bestellen",
     wasco: "Wasco",
@@ -13670,6 +16592,7 @@ function moduleForOfficeSection(section = "") {
   const map = {
     projects: "workorders",
     workorders: "workorders",
+    appliances: "workorders",
     planning: "planning",
     agenda: "planning",
     calendar: "planning",
@@ -13682,6 +16605,8 @@ function moduleForOfficeSection(section = "") {
     inventory: "inventory",
     warehouse: "warehouse",
     "garage-box": "warehouse",
+    "van-stock": "van_stock",
+    busvoorraad: "van_stock",
     kits: "kits",
     orders: "ordering",
     wasco: "wasco",
@@ -13756,6 +16681,7 @@ function renderDashboardTab() {
   const tabModules = {
     Projecten: "workorders",
     Werkbonnen: "workorders",
+    Toestellendatabase: "workorders",
     Planning: "planning",
     Klanten: "customers",
     Offertes: "quotes",
@@ -13764,6 +16690,7 @@ function renderDashboardTab() {
     Rapportages: "reports",
     Voorraad: "inventory",
     Magazijn: "warehouse",
+    Busvoorraad: "van_stock",
     Koffers: "kits",
     Bestellen: "ordering",
     Wasco: "wasco",
@@ -13778,6 +16705,7 @@ function renderDashboardTab() {
   if (requiredModule && !isCompanyModuleActive(requiredModule)) return moduleInactiveMessage();
   if (ui.dashboardTab === "Dashboard") return renderOfficeDashboard();
   if (ui.dashboardTab === "Projecten" || ui.dashboardTab === "Werkbonnen") return renderOfficeProjects();
+  if (ui.dashboardTab === "Toestellendatabase") return renderApplianceDatabase();
   if (ui.dashboardTab === "Planning") return renderPlanning();
   if (ui.dashboardTab === "Klanten") return renderCustomers();
   if (ui.dashboardTab === "Offertes") return renderQuotes();
@@ -13786,6 +16714,7 @@ function renderDashboardTab() {
   if (ui.dashboardTab === "Rapportages") return renderOfficeReports();
   if (ui.dashboardTab === "Voorraad") return renderPrices();
   if (ui.dashboardTab === "Magazijn") return renderWarehouseModule();
+  if (ui.dashboardTab === "Busvoorraad") return renderVanStockModule();
   if (ui.dashboardTab === "Koffers") return renderKitsModule();
   if (ui.dashboardTab === "Bestellen") return renderOrderingModule();
   if (ui.dashboardTab === "Wasco") return renderWascoModule();
@@ -13796,8 +16725,274 @@ function renderDashboardTab() {
   if (ui.dashboardTab === "API") return renderApiModule();
   if (ui.dashboardTab === "Boekhouding") return renderAccountingModule();
   if (ui.dashboardTab === "Gebruikers") return renderUsers();
-  if (ui.dashboardTab === "Instellingen") return `${renderCompanySettings()}${renderChecklistSettings()}`;
+  if (ui.dashboardTab === "Instellingen") return `${renderCompanySettings()}${renderMenuLayoutSettings()}${renderChecklistSettings()}`;
   return renderOfficeDashboard();
+}
+
+function applianceCategories() {
+  return ["CV-ketel", "Geiser", "Boiler", "Hybride warmtepomp", "Anders"];
+}
+
+function applianceBrands() {
+  return ["Remeha", "Intergas", "Nefit", "Vaillant", "Atag", "Itho Daalderop", "Bosch", "AWB", "Brink", "Anders"];
+}
+
+function applianceModelsForBrand(brand) {
+  const models = {
+    Remeha: ["Avanta 35C", "Avanta 28C", "Tzerra Ace", "Calenta Ace", "Quinta Ace", "Anders"],
+    Intergas: ["HRE 28/24", "HRE 36/30", "Xtreme 36", "Kombi Kompakt", "Anders"],
+    Nefit: ["TrendLine", "ProLine", "TopLine", "EcomLine", "Anders"],
+    Vaillant: ["ecoTEC plus", "ecoTEC classic", "VHR", "Anders"],
+    Atag: ["i-Serie", "E-Serie", "Q-Serie", "Anders"],
+    "Itho Daalderop": ["Base Cube", "HP Cube", "Amber", "Anders"],
+    Bosch: ["Condens 2300", "Condens 3000", "HRC", "Anders"],
+    AWB: ["ThermoMaster", "ThermoElegance", "Anders"],
+    Brink: ["Elan", "Flair", "Anders"],
+  };
+  return models[brand] || ["Anders"];
+}
+
+function renderGasApplianceRegistration(project, workOrder) {
+  const appliance = workOrder.appliance || {};
+  const selectedBrand = appliance.brand || "Remeha";
+  const models = applianceModelsForBrand(selectedBrand);
+  return `<section class="panel subtle-panel appliance-registration">
+    <h3>Gastoestelgegevens</h3>
+    <p class="muted">Deze gegevens worden opgeslagen bij klant, adres, werkbon en de toestellendatabase.</p>
+    <div class="appliance-quick-grid">
+      <label>Merk toestel * <select required onchange="setWorkOrderField('${project.id}', 'appliance.brand', this.value)">
+        <option value="">Kies merk...</option>
+        ${applianceBrands().map((brand) => `<option value="${brand}" ${selectedBrand === brand ? "selected" : ""}>${brand}</option>`).join("")}
+      </select></label>
+      <label>Type toestel <select onchange="setWorkOrderField('${project.id}', 'appliance.model', this.value)">
+        <option value="">Kies type...</option>
+        ${models.map((model) => `<option value="${model}" ${appliance.model === model ? "selected" : ""}>${model}</option>`).join("")}
+      </select></label>
+      <label>Serienummer <input value="${escapeAttr(appliance.serial_number || "")}" placeholder="___________" onchange="setWorkOrderField('${project.id}', 'appliance.serial_number', this.value)" /></label>
+      <label>Foto typeplaatje <span class="btn secondary file-button">Foto maken<input type="file" accept="image/*" capture="environment" onchange="addWorkOrderPhotos('${project.id}', this, 'typeplaatje')" /></span></label>
+    </div>
+    <details class="appliance-more-fields">
+      <summary>Meer toestelgegevens</summary>
+      <div class="form-grid">
+      <label>Bouwjaar <input type="number" min="1950" max="2100" value="${escapeAttr(appliance.build_year || "")}" onchange="setWorkOrderField('${project.id}', 'appliance.build_year', this.value)" /></label>
+      <label>Toestelcategorie
+        <select onchange="setWorkOrderField('${project.id}', 'appliance.category', this.value)">
+          <option value="">Kies...</option>
+          ${applianceCategories().map((category) => `<option value="${category}" ${appliance.category === category ? "selected" : ""}>${category}</option>`).join("")}
+        </select>
+      </label>
+      <label>Werkzaamheden <textarea rows="3" onchange="setWorkOrderField('${project.id}', 'appliance.work_performed', this.value)">${escapeHtml(appliance.work_performed || "")}</textarea></label>
+      <label>Opmerkingen <textarea rows="3" onchange="setWorkOrderField('${project.id}', 'appliance.notes', this.value)">${escapeHtml(appliance.notes || "")}</textarea></label>
+      </div>
+    </details>
+  </section>`;
+}
+
+function customerForApplianceProject(project) {
+  return customerForProject(project) || (project.customer_id ? byId(state.customers || [], project.customer_id) : null);
+}
+
+function projectAddressParts(project) {
+  const customer = customerForApplianceProject(project);
+  return {
+    address: customer?.address || project.address || "",
+    postal_code: customer?.postal_code || project.postal_code || "",
+    city: customer?.city || project.city || "",
+  };
+}
+
+function applianceFingerprint(companyId, appliance) {
+  return [
+    companyId,
+    String(appliance.serial_number || "").trim().toLowerCase(),
+    String(appliance.brand || "").trim().toLowerCase(),
+    String(appliance.model || "").trim().toLowerCase(),
+  ].join("|");
+}
+
+function persistGasApplianceRegistration(project) {
+  const workOrder = ensureWorkOrder(project);
+  if (!project || workOrder.gasApplianceWork !== "ja") return null;
+  state.appliances = state.appliances || [];
+  const companyId = strictRecordCompanyId(project);
+  const customer = customerForApplianceProject(project);
+  const address = projectAddressParts(project);
+  const mechanicId = project.assignedMechanicId || project.assigned_mechanic_id || project.mechanicId || "";
+  const source = {
+    ...workOrder.appliance,
+    company_id: companyId,
+    companyId: companyId,
+    customer_id: customer?.id || project.customer_id || project.customerId || "",
+    customer_name: customer?.customer_name || project.customer || project.customer_name || "",
+    address: address.address,
+    postal_code: address.postal_code,
+    city: address.city,
+    project_id: project.id,
+    workorder_id: project.id,
+    workorder_number: workorderNumber(project),
+    mechanic_id: mechanicId,
+    mechanic_name: mechanicNameById(mechanicId) || project.technician || "",
+    service_date: project.completedAt || project.completed_at || project.date || new Date().toISOString(),
+    work_type: workOrder.appliance?.work_performed || workOrder.solution || project.projectName || "",
+    last_notes: workOrder.appliance?.notes || "",
+    active: true,
+  };
+  const fingerprint = applianceFingerprint(companyId, source);
+  let appliance = state.appliances.find((row) => applianceFingerprint(strictRecordCompanyId(row), row) === fingerprint);
+  const now = new Date().toISOString();
+  if (!appliance) {
+    appliance = {
+      id: uid("appliance"),
+      created_at: now,
+      service_history: [],
+    };
+    state.appliances.push(appliance);
+  }
+  Object.assign(appliance, source, {
+    updated_at: now,
+    last_service_date: source.service_date,
+    service_count: Number(appliance.service_count || 0) + 1,
+  });
+  const historyEntry = {
+    id: uid("appliance-service"),
+    project_id: project.id,
+    workorder_id: project.id,
+    workorder_number: workorderNumber(project),
+    mechanic_id: mechanicId,
+    mechanic_name: source.mechanic_name,
+    service_date: source.service_date,
+    work_type: source.work_type,
+    notes: source.last_notes,
+    created_at: now,
+  };
+  appliance.service_history = [...(appliance.service_history || []).filter((entry) => entry.workorder_id !== project.id), historyEntry];
+  workOrder.appliance_id = appliance.id;
+  workOrder.appliance_snapshot = { ...source, appliance_id: appliance.id, saved_at: now };
+  project.appliance_id = appliance.id;
+  if (customer) {
+    customer.appliances = customer.appliances || [];
+    if (!customer.appliances.some((item) => item.id === appliance.id)) {
+      customer.appliances.push({
+        id: appliance.id,
+        brand: appliance.brand,
+        model: appliance.model,
+        serial_number: appliance.serial_number,
+        category: appliance.category,
+        address: appliance.address,
+        postal_code: appliance.postal_code,
+        city: appliance.city,
+      });
+    }
+    customer.updated_at = now;
+  }
+  return appliance;
+}
+
+function applianceRows() {
+  return companyScoped(state.appliances || []).filter((appliance) => appliance.active !== false);
+}
+
+function applianceFilterValue(key) {
+  ui.applianceFilters = ui.applianceFilters || {};
+  return String(ui.applianceFilters[key] || "");
+}
+
+function setApplianceFilter(key, value) {
+  ui.applianceFilters = ui.applianceFilters || {};
+  ui.applianceFilters[key] = value || "";
+  scheduleRender();
+}
+
+function filteredAppliances() {
+  const filters = ui.applianceFilters || {};
+  const matches = (value, query) => !query || String(value || "").toLowerCase().includes(String(query || "").toLowerCase());
+  return applianceRows().filter((row) =>
+    matches(row.brand, filters.brand) &&
+    matches(row.model, filters.model) &&
+    matches(row.serial_number, filters.serial) &&
+    matches(row.build_year, filters.year) &&
+    matches(row.customer_name, filters.customer) &&
+    matches(`${row.address || ""} ${row.postal_code || ""} ${row.city || ""}`, filters.address) &&
+    matches(row.mechanic_name, filters.mechanic) &&
+    matches(row.service_date, filters.date) &&
+    matches(row.work_type, filters.work_type)
+  );
+}
+
+function topApplianceCounts(rows, field, limit = 10) {
+  const counts = new Map();
+  rows.forEach((row) => {
+    const key = String(row[field] || "Onbekend").trim() || "Onbekend";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+
+function renderApplianceCountTable(title, rows) {
+  return `<section class="panel subtle-panel"><h3>${escapeHtml(title)}</h3>
+    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Waarde</th><th>Aantal</th></tr></thead><tbody>${rows.map(([label, count]) => `<tr><td>${escapeHtml(label)}</td><td>${count}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Geen data.</p>`}
+  </section>`;
+}
+
+function renderApplianceDatabase() {
+  const rows = filteredAppliances();
+  const allRows = applianceRows();
+  const categoryCounts = topApplianceCounts(rows, "category", 20);
+  const faultCounts = topApplianceCounts(rows.filter((row) => /storing|defect|fout|lekkage/i.test(row.work_type || row.last_notes || "")), "brand", 10);
+  return `<section class="office-page-head">
+    <div><h2>Toestellendatabase</h2><p>Gastoestellen per klant, adres, werkbon en onderhoudshistorie.</p></div>
+    <span class="badge">${rows.length}/${allRows.length} toestellen</span>
+  </section>
+  <section class="panel">
+    <h2>Filters</h2>
+    <div class="form-grid">
+      <label>Merk <input value="${escapeAttr(applianceFilterValue("brand"))}" oninput="setApplianceFilter('brand', this.value)" /></label>
+      <label>Type <input value="${escapeAttr(applianceFilterValue("model"))}" oninput="setApplianceFilter('model', this.value)" /></label>
+      <label>Serienummer <input value="${escapeAttr(applianceFilterValue("serial"))}" oninput="setApplianceFilter('serial', this.value)" /></label>
+      <label>Bouwjaar <input value="${escapeAttr(applianceFilterValue("year"))}" oninput="setApplianceFilter('year', this.value)" /></label>
+      <label>Klant <input value="${escapeAttr(applianceFilterValue("customer"))}" oninput="setApplianceFilter('customer', this.value)" /></label>
+      <label>Adres <input value="${escapeAttr(applianceFilterValue("address"))}" oninput="setApplianceFilter('address', this.value)" /></label>
+      <label>Monteur <input value="${escapeAttr(applianceFilterValue("mechanic"))}" oninput="setApplianceFilter('mechanic', this.value)" /></label>
+      <label>Datum werkzaamheden <input value="${escapeAttr(applianceFilterValue("date"))}" oninput="setApplianceFilter('date', this.value)" /></label>
+      <label>Type werkzaamheden <input value="${escapeAttr(applianceFilterValue("work_type"))}" oninput="setApplianceFilter('work_type', this.value)" /></label>
+    </div>
+  </section>
+  <section class="stats office-kpis">
+    <div class="stat-card"><span>Toestellen</span><strong>${rows.length}</strong></div>
+    <div class="stat-card"><span>Merken</span><strong>${new Set(rows.map((row) => row.brand).filter(Boolean)).size}</strong></div>
+    <div class="stat-card"><span>Types</span><strong>${new Set(rows.map((row) => row.model).filter(Boolean)).size}</strong></div>
+    <div class="stat-card"><span>Storingen</span><strong>${rows.filter((row) => /storing|defect|fout|lekkage/i.test(row.work_type || row.last_notes || "")).length}</strong></div>
+  </section>
+  <section class="appliance-report-grid">
+    ${renderApplianceCountTable("Top 10 meest voorkomende merken", topApplianceCounts(rows, "brand"))}
+    ${renderApplianceCountTable("Top 10 meest voorkomende types", topApplianceCounts(rows, "model"))}
+    ${renderApplianceCountTable("Aantal werkzaamheden per toesteltype", categoryCounts)}
+    ${renderApplianceCountTable("Aantal storingen per merk/type", faultCounts)}
+  </section>
+  <section class="panel">
+    <h2>Toestellen</h2>
+    <div class="table-wrap"><table><thead><tr><th>Merk</th><th>Type</th><th>Serienummer</th><th>Bouwjaar</th><th>Categorie</th><th>Klant</th><th>Adres</th><th>Monteur</th><th>Datum</th><th>Werkzaamheden</th><th>Historie</th></tr></thead><tbody>
+      ${rows.map((row) => `<tr>
+        <td>${escapeHtml(row.brand || "-")}</td>
+        <td>${escapeHtml(row.model || "-")}</td>
+        <td>${escapeHtml(row.serial_number || "-")}</td>
+        <td>${escapeHtml(row.build_year || "-")}</td>
+        <td>${escapeHtml(row.category || "-")}</td>
+        <td>${escapeHtml(row.customer_name || "-")}</td>
+        <td>${escapeHtml(`${row.address || ""} ${row.postal_code || ""} ${row.city || ""}`.trim() || "-")}</td>
+        <td>${escapeHtml(row.mechanic_name || "-")}</td>
+        <td>${escapeHtml(safeDate(row.service_date || row.last_service_date))}</td>
+        <td>${escapeHtml(row.work_type || "-")}</td>
+        <td>${(row.service_history || []).length}</td>
+      </tr>`).join("")}
+    </tbody></table></div>
+  </section>
+  <section class="panel">
+    <h2>Onderhoudshistorie per toestel</h2>
+    ${rows.map((row) => `<details class="appliance-history"><summary>${escapeHtml(row.brand || "-")} ${escapeHtml(row.model || "")} - ${escapeHtml(row.serial_number || "-")}</summary>
+      ${(row.service_history || []).length ? `<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Werkbon</th><th>Monteur</th><th>Werkzaamheden</th><th>Opmerkingen</th></tr></thead><tbody>${row.service_history.map((entry) => `<tr><td>${escapeHtml(safeDate(entry.service_date))}</td><td>${escapeHtml(entry.workorder_number || entry.workorder_id || "-")}</td><td>${escapeHtml(entry.mechanic_name || "-")}</td><td>${escapeHtml(entry.work_type || "-")}</td><td>${escapeHtml(entry.notes || "-")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Geen historie.</p>`}
+    </details>`).join("")}
+  </section>`;
 }
 
 function renderWorkOrderForm(project) {
@@ -13909,6 +17104,17 @@ function validateWorkOrder(project) {
   return errors;
 }
 
+const baseCompleteProject = completeProject;
+completeProject = function completeProjectWithApplianceRegistration(projectId) {
+  const project = byId(state.projects || [], projectId);
+  if (!project) return baseCompleteProject(projectId);
+  const beforeErrors = validateWorkOrder(project);
+  if (beforeErrors.length) return baseCompleteProject(projectId);
+  persistGasApplianceRegistration(project);
+  saveState();
+  return baseCompleteProject(projectId);
+};
+
 const USER_PERMISSION_GROUPS = [
   ["Planning rechten", [
     ["can_create_own_appointments", "Mag eigen afspraken maken"],
@@ -13918,16 +17124,34 @@ const USER_PERMISSION_GROUPS = [
     ["can_create_customers", "Klanten aanmaken"],
     ["can_edit_customers", "Klanten bewerken"],
   ]],
-  ["Werkbonrechten", [
+  ["Werkbon rechten", [
+    ["can_view_workorders", "Werkbonnen bekijken"],
+    ["can_open_workorders", "Werkbonnen openen"],
+    ["can_create_workorders", "Werkbonnen aanmaken"],
+    ["can_edit_workorders", "Werkbonnen bewerken"],
+    ["can_delete_workorders", "Werkbonnen verwijderen"],
     ["can_close_workorders", "Werkbonnen afsluiten"],
+    ["can_send_workorders_to_customer", "Werkbonnen versturen naar klant"],
+    ["can_export_workorders_pdf", "Werkbonnen exporteren als PDF"],
     ["can_delete_photos", "Foto's verwijderen"],
   ]],
   ["Offerte & betaling", [
     ["can_create_quotes", "Offertes maken"],
     ["can_register_payments", "Betalingen registreren"],
   ]],
+  ["Factuurrechten", [
+    ["can_view_invoices", "Facturen bekijken"],
+    ["can_create_invoices", "Facturen aanmaken"],
+    ["can_edit_invoices", "Facturen bewerken"],
+    ["can_send_invoices", "Facturen versturen"],
+    ["can_export_invoices_pdf", "Facturen exporteren als PDF"],
+  ]],
   ["Voorraad", [
     ["can_manage_inventory", "Voorraad beheren"],
+  ]],
+  ["Busvoorraad", [
+    ["can_view_own_van_stock", "Eigen busvoorraad bekijken"],
+    ["can_count_van_stock", "Businventarisatie uitvoeren"],
   ]],
   ["E-mail", [
     ["can_reply_emails", "E-mails beantwoorden"],
@@ -13953,6 +17177,7 @@ function allUserPermissionFields() {
 }
 
 function permissionValue(user, field) {
+  if (String(field || "").includes("_workorders") && userRole(user) === ROLES.COMPANY_ADMIN) return user?.[field] !== false;
   const alias = USER_PERMISSION_ALIASES[field];
   if (field === "can_close_workorders") return user?.[field] !== false;
   return Boolean(user?.[field] ?? (alias ? user?.[alias] : false));
@@ -13971,6 +17196,45 @@ function syncUserPermissionAliases(user) {
   return user;
 }
 
+function hasWorkorderPermission(field, user = currentUser()) {
+  if (!user) return false;
+  if (isPlatformSuperAdmin() && !isSupportMode()) return true;
+  if (userRole(user) === ROLES.COMPANY_ADMIN) return permissionValue(user, field);
+  if (userRole(user) !== ROLES.MECHANIC) return false;
+  return permissionValue(user, field);
+}
+
+function canUseWorkorder(project, field) {
+  if (!project || !isSameCompany(project)) return false;
+  if (!hasWorkorderPermission(field)) return false;
+  if (isCompanyAdmin() || isPlatformSuperAdmin()) return true;
+  return project.assignedMechanicId === currentUser()?.id ||
+    project.assigned_mechanic_id === currentUser()?.id ||
+    project.mechanicId === currentUser()?.id ||
+    project.mechanic_id === currentUser()?.id ||
+    project.technician === currentUser()?.name;
+}
+
+function canViewWorkorder(project) {
+  return canUseWorkorder(project, "can_view_workorders");
+}
+
+function canOpenWorkorder(project) {
+  return canUseWorkorder(project, "can_open_workorders");
+}
+
+function canAccessProject(project) {
+  return canOpenWorkorder(project);
+}
+
+function visibleProjects() {
+  return (state.projects || []).filter((project) => canViewWorkorder(project));
+}
+
+function openWorkorderDeniedMessage() {
+  return `<div class="panel empty">Je hebt geen rechten om deze werkbon te openen.</div>`;
+}
+
 function renderYesNoSelect(user, field, onChange) {
   const value = permissionValue(user, field);
   return `<select onchange="${onChange}"><option value="false" ${!value ? "selected" : ""}>Nee</option><option value="true" ${value ? "selected" : ""}>Ja</option></select>`;
@@ -13984,7 +17248,7 @@ function renderPermissionGroups(user, onChangeFactory) {
 }
 
 function renderNewUserPermissionInputs() {
-  const defaults = { can_close_workorders: true };
+  const defaults = { can_view_workorders: true, can_open_workorders: true, can_close_workorders: true };
   return `<div class="user-permission-groups full">${USER_PERMISSION_GROUPS.map(([title, fields]) => `<section class="user-permission-section">
     <h4>${escapeHtml(title)}</h4>
     <div class="user-permission-grid">${fields.map(([field, label]) => `<label class="permission-row"><span>${escapeHtml(label)}</span><select name="${field}"><option value="false" ${!defaults[field] ? "selected" : ""}>Nee</option><option value="true" ${defaults[field] ? "selected" : ""}>Ja</option></select></label>`).join("")}</div>
@@ -14050,19 +17314,94 @@ function renderNewUserForm() {
   </section>`;
 }
 
+function userAccordionState() {
+  ui.openUserCards = ui.openUserCards || {};
+  return ui.openUserCards;
+}
+
+function toggleUserCard(userId) {
+  const open = userAccordionState();
+  open[userId] = !open[userId];
+  render();
+}
+
+function userRoleFilter() {
+  return ui.userRoleFilter || "ALL";
+}
+
+function setUserRoleFilter(value) {
+  ui.userRoleFilter = value || "ALL";
+  render();
+}
+
+function userManagementSearchText(user) {
+  const companyName = byId(state.companies || [], strictRecordCompanyId(user))?.name || "";
+  return [user.name, user.email, userRole(user), roleLabel(userRole(user)), companyName].join(" ").toLowerCase();
+}
+
+function filterUsersForManagement(users) {
+  const search = platformUserSearch();
+  const roleFilter = userRoleFilter();
+  return users
+    .filter((user) => roleFilter === "ALL" || userRole(user) === roleFilter)
+    .filter((user) => !search || userManagementSearchText(user).includes(search));
+}
+
 function renderUserFilters() {
-  if (!isPlatformSuperAdmin()) return "";
   const companies = platformCompanies().filter((company) => company.active !== false);
   return `<section class="panel user-filter-panel">
     <div class="user-permission-grid">
-      <label>Bedrijfsfilter <select onchange="setPlatformUserCompanyFilter(this.value)"><option value="ALL">Alle bedrijven</option>${companies.map((company) => `<option value="${company.id}" ${platformUserCompanyFilter() === company.id ? "selected" : ""}>${escapeHtml(company.name)}</option>`).join("")}</select></label>
-      <label>Zoeken <input value="${escapeAttr(ui.platformUserSearch || "")}" placeholder="Naam, e-mail, bedrijf of rol" oninput="setPlatformUserSearch(this.value)" /></label>
+      ${isPlatformSuperAdmin() ? `<label>Bedrijfsfilter <select onchange="setPlatformUserCompanyFilter(this.value)"><option value="ALL">Alle bedrijven</option>${companies.map((company) => `<option value="${company.id}" ${platformUserCompanyFilter() === company.id ? "selected" : ""}>${escapeHtml(company.name)}</option>`).join("")}</select></label>` : ""}
+      <label>Zoeken <input value="${escapeAttr(ui.platformUserSearch || "")}" placeholder="Naam, e-mail of rol" oninput="setPlatformUserSearch(this.value)" /></label>
+      <label>Rol <select onchange="setUserRoleFilter(this.value)">
+        <option value="ALL" ${userRoleFilter() === "ALL" ? "selected" : ""}>Alle rollen</option>
+        <option value="${ROLES.COMPANY_ADMIN}" ${userRoleFilter() === ROLES.COMPANY_ADMIN ? "selected" : ""}>Company Admin / Kantoor</option>
+        <option value="${ROLES.MECHANIC}" ${userRoleFilter() === ROLES.MECHANIC ? "selected" : ""}>Monteur</option>
+      </select></label>
     </div>
   </section>`;
 }
 
+function renderUserCard(user) {
+  syncUserPermissionAliases(user);
+  const role = userRole(user);
+  const companyId = strictRecordCompanyId(user);
+  const company = byId(state.companies || [], companyId);
+  const roleOptions = roleOptionsForUserManagement();
+  const companyOptions = platformCompanies().filter((company) => company.active !== false);
+  const isOpen = userAccordionState()[user.id] === true;
+  return `<article class="user-card ${isOpen ? "open" : "collapsed"}">
+    <button class="user-card-summary" type="button" onclick="toggleUserCard('${user.id}')">
+      <span class="rights-caret">${isOpen ? "▾" : "▸"}</span>
+      <span class="user-summary-main"><strong>${escapeHtml(user.name || "-")}</strong><small>${escapeHtml(user.email || "-")}</small></span>
+      <span class="badge">${escapeHtml(roleLabel(role))}</span>
+      <span class="badge ${user.active !== false ? "ok" : "danger"}">${user.active !== false ? "Actief" : "Inactief"}</span>
+      <span class="user-toggle-label">${isOpen ? "Inklappen" : "Uitklappen"}</span>
+    </button>
+    ${isOpen ? `<div class="user-card-expanded">
+      <div class="button-row user-actions">
+        <button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button>
+        <button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button>
+        <button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button>
+      </div>
+      <section class="user-permission-section">
+        <h4>Basisgegevens</h4>
+        <div class="user-permission-grid">
+          <label>Actief <select onchange="updateUser('${user.id}', 'active', this.value === 'true')"><option value="true" ${user.active !== false ? "selected" : ""}>Ja</option><option value="false" ${user.active === false ? "selected" : ""}>Nee</option></select></label>
+          <label>Naam <input value="${escapeAttr(user.name || "")}" onchange="updateUser('${user.id}', 'name', this.value)" /></label>
+          <label>E-mail <input type="email" value="${escapeAttr(user.email || "")}" onchange="updateUser('${user.id}', 'email', this.value)" /></label>
+          <label>Rol <select onchange="updateUser('${user.id}', 'role', this.value)">${roleOptions.map(([value, label]) => `<option value="${value}" ${role === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+          ${isPlatformSuperAdmin() ? `<label>Bedrijf <select onchange="updateUser('${user.id}', 'company_id', this.value)">${companyOptions.map((company) => `<option value="${company.id}" ${companyId === company.id ? "selected" : ""}>${escapeHtml(company.name)}</option>`).join("")}</select></label>` : `<label>Bedrijf <input value="${escapeAttr(company?.name || companyId || "-")}" readonly /></label>`}
+        </div>
+      </section>
+      ${renderPermissionGroups(user, (field) => `updateUser('${user.id}', '${field}', this.value === 'true')`)}
+    </div>` : ""}
+  </article>`;
+}
+
 function renderUsers() {
-  const users = isPlatformSuperAdmin() ? platformManagedUsers() : visibleUsersForUserManagement();
+  const baseUsers = isPlatformSuperAdmin() ? platformManagedUsers() : visibleUsersForUserManagement();
+  const users = filterUsersForManagement(baseUsers);
   const pendingDeleteUser = ui.pendingDeleteUserId && canManageUser(byId(state.users || [], ui.pendingDeleteUserId)) ? byId(state.users || [], ui.pendingDeleteUserId) : null;
   return `<section class="users-page">
     ${renderNewUserForm()}
@@ -14103,6 +17442,11 @@ function addUser(event) {
     createdAt: now,
   };
   allUserPermissionFields().forEach((field) => setUserPermissionValue(user, field, role === ROLES.MECHANIC ? form.get(field) === "true" : form.get(field) === "true"));
+  if (role === ROLES.COMPANY_ADMIN) {
+    allUserPermissionFields()
+      .filter((field) => String(field).includes("_workorders"))
+      .forEach((field) => setUserPermissionValue(user, field, true));
+  }
   state.users.push(user);
   if (isPlatformSuperAdmin()) logPlatformAction("gebruiker aangemaakt", companyId, `${user.name} (${role})`);
   saveState();
@@ -14125,6 +17469,11 @@ function updateUser(userId, field, value) {
     if (value === ROLES.PLATFORM_ADMIN) return alert("Company Admin mag geen platform_admin aanmaken.");
     if (value !== ROLES.MECHANIC && value !== ROLES.COMPANY_ADMIN) return alert("Geen toegang tot platformbeheer.");
     user.role = value;
+    if (value === ROLES.COMPANY_ADMIN) {
+      allUserPermissionFields()
+        .filter((permission) => String(permission).includes("_workorders"))
+        .forEach((permission) => setUserPermissionValue(user, permission, true));
+    }
     if (!isPlatformSuperAdmin()) {
       user.company_id = currentCompanyId();
       user.companyId = currentCompanyId();
@@ -14143,6 +17492,2642 @@ function updateUser(userId, field, value) {
   if (isPlatformSuperAdmin()) logPlatformAction("gebruiker gewijzigd", strictRecordCompanyId(user), `${user.email}: ${field}`);
   saveState();
   render();
+}
+
+function normalizeCompanyBusinessDetails(company) {
+  if (!company) return null;
+  normalizeCompanyBranding(company);
+  company.website = company.website || company.company_website || company.branding?.website || "";
+  company.company_website = company.company_website || company.website || "";
+  company.address = company.address || company.company_address || "";
+  company.company_address = company.company_address || company.address || "";
+  company.kvk_number = company.kvk_number || company.kvk || company.chamber_of_commerce || "";
+  company.vat_number = company.vat_number || company.btw_number || company.btw || "";
+  company.btw_number = company.btw_number || company.vat_number || "";
+  company.phone = company.phone || company.company_phone || company.telephone || company.branding?.phone || "";
+  company.company_phone = company.company_phone || company.phone || "";
+  company.email = company.email || company.contact_email || company.company_email || company.branding?.email || "";
+  company.contact_email = company.contact_email || company.email || "";
+  company.company_email = company.company_email || company.email || "";
+  company.iban = company.iban || company.company_iban || company.branding?.iban || "";
+  company.company_iban = company.company_iban || company.iban || "";
+  company.payment_term_days = Number(company.payment_term_days ?? company.default_payment_term_days ?? company.paymentTermDays ?? company.branding?.paymentTermDays ?? 14);
+  company.default_payment_term_days = company.payment_term_days;
+  company.default_email_signature = company.default_email_signature || company.email_signature || company.branding?.emailSignature || `Met vriendelijke groet,\n${company.name || "WerkbonSysteem.nl"}`;
+  company.email_signature = company.email_signature || company.default_email_signature;
+  company.max_logo_size_mb = Number(company.max_logo_size_mb ?? company.logo_max_size_mb ?? 5);
+  company.branding = {
+    ...(company.branding || {}),
+    website: company.website,
+    address: company.address,
+    kvkNumber: company.kvk_number,
+    vatNumber: company.vat_number,
+    phone: company.phone,
+    email: company.email,
+    iban: company.iban,
+    paymentTermDays: company.payment_term_days,
+    emailSignature: company.default_email_signature,
+  };
+  return company;
+}
+
+function renderPdfBrandHeader(company) {
+  normalizeCompanyBusinessDetails(company);
+  const logo = companyLogoSrc(company);
+  const contactLine = [company.phone, company.email || company.contact_email, company.website].filter(Boolean).join(" | ");
+  const registryLine = [company.kvk_number ? `KvK: ${company.kvk_number}` : "", company.vat_number ? `BTW: ${company.vat_number}` : ""].filter(Boolean).join(" | ");
+  const paymentLine = [company.iban ? `IBAN: ${company.iban}` : "", Number(company.payment_term_days) ? `Betaaltermijn: ${Number(company.payment_term_days)} dagen` : ""].filter(Boolean).join(" | ");
+  return `<div class="pdf-brand">
+    ${logo ? `<img src="${escapeAttr(logo)}" alt="${escapeAttr(company?.name || "Logo")}" />` : `<div class="pdf-brand-fallback">${escapeHtml(companyFallbackMark(company))}</div>`}
+    <div>
+      <h1>${escapeHtml(company?.name || "WerkbonSysteem.nl")}</h1>
+      <p>${escapeHtml(company?.address || company?.company_address || "")}</p>
+      <p>${escapeHtml(contactLine)}</p>
+      <p>${escapeHtml(registryLine)}</p>
+      <p>${escapeHtml(paymentLine)}</p>
+    </div>
+  </div>`;
+}
+
+function companyEmailSignature(company, fallbackName = "WerkbonSysteem.nl") {
+  const normalized = normalizeCompanyBusinessDetails(company || { name: fallbackName });
+  return normalized.default_email_signature || normalized.email_signature || `Met vriendelijke groet,\n${normalized.name || fallbackName}`;
+}
+
+function companyHasLogo(company) {
+  return Boolean(companyLogoSrc(company));
+}
+
+function updateCompanyBrandingValue(companyId, field, value) {
+  const company = byId(state.companies || [], companyId);
+  if (!company || (!isPlatformSuperAdmin() && strictRecordCompanyId(company) !== currentCompanyId())) return alert("Geen toegang.");
+  const textFields = ["name", "website", "company_website", "address", "company_address", "kvk_number", "vat_number", "btw_number", "phone", "company_phone", "email", "contact_email", "company_email", "iban", "company_iban", "default_email_signature", "email_signature"];
+  if (field === "name") {
+    company.name = String(value || "").trim() || company.name;
+  } else if (field === "primary_color" || field === "secondary_color") {
+    company[field] = value || (field === "primary_color" ? "#08172e" : "#d6a73c");
+  } else if (field === "max_logo_size_mb") {
+    company.max_logo_size_mb = Math.max(1, Number(value || 5));
+  } else if (field === "payment_term_days" || field === "default_payment_term_days") {
+    company.payment_term_days = Math.max(0, Number(value || 0));
+    company.default_payment_term_days = company.payment_term_days;
+  } else if (textFields.includes(field)) {
+    company[field] = String(value || "").trim();
+  } else {
+    company[field] = value;
+  }
+  if (field === "company_website") company.website = company.company_website;
+  if (field === "website") company.company_website = company.website;
+  if (field === "company_address") company.address = company.company_address;
+  if (field === "address") company.company_address = company.address;
+  if (field === "btw_number") company.vat_number = company.btw_number;
+  if (field === "vat_number") company.btw_number = company.vat_number;
+  if (field === "company_phone") company.phone = company.company_phone;
+  if (field === "phone") company.company_phone = company.phone;
+  if (["email", "contact_email", "company_email"].includes(field)) {
+    const email = company[field] || "";
+    company.email = email;
+    company.contact_email = email;
+    company.company_email = email;
+  }
+  if (field === "company_iban") company.iban = company.company_iban;
+  if (field === "iban") company.company_iban = company.iban;
+  if (field === "email_signature") company.default_email_signature = company.email_signature;
+  if (field === "default_email_signature") company.email_signature = company.default_email_signature;
+  company.branding_updated_at = new Date().toISOString();
+  normalizeCompanyBusinessDetails(company);
+  if (isPlatformSuperAdmin()) logPlatformAction("bedrijfsbranding gewijzigd", company.id, `${field}: ${value}`);
+  saveState();
+  render();
+}
+
+function renderCompanyBrandingPanel(company, platform = false) {
+  normalizeCompanyBusinessDetails(company);
+  const change = (field) => platform ? `updateCompanyBrandingValue('${company.id}', '${field}', this.value)` : `updateCurrentCompanyBranding('${field}', this.value)`;
+  const logoPresent = companyHasLogo(company);
+  return `<section class="panel branding-panel">
+    <div class="article-head">
+      <div>
+        <h2>Bedrijfsgegevens</h2>
+        <p>White-label branding voor portaal, werkbonnen, offertes, facturen, rapportages, e-mails, klantportaal en PDF exports.</p>
+      </div>
+      <span class="badge ${logoPresent ? "ok" : "warn"}">${logoPresent ? "Logo aanwezig" : "Geen logo"}</span>
+    </div>
+    <section class="company-logo-manager">
+      <div class="company-logo-preview">
+        ${renderBrandMark(company, "branding-logo-preview")}
+        <div>
+          <strong>Bedrijfslogo</strong>
+          <span>PNG, JPG, JPEG, SVG of WEBP. Maximaal ${Number(company.max_logo_size_mb || 5)} MB.</span>
+        </div>
+      </div>
+      <div class="button-row">
+        <label class="btn secondary file-button">Upload logo<input type="file" accept="image/png,image/jpeg,image/jpg,image/svg+xml,image/webp" onchange="updateCompanyLogo('${company.id}', this.files[0])" /></label>
+        ${logoPresent ? `<button class="btn danger" type="button" onclick="removeCompanyLogo('${company.id}')">Logo verwijderen</button>` : ""}
+        ${platform ? `<button class="btn warn" type="button" onclick="resetCompanyBranding('${company.id}')">Branding resetten</button>` : ""}
+      </div>
+    </section>
+    <div class="form-grid">
+      <label>Bedrijfsnaam <input value="${escapeAttr(company.name || "")}" onchange="${change("name")}" /></label>
+      <label>Primaire huisstijl kleur <input type="color" value="${escapeAttr(company.primary_color || "#08172e")}" onchange="${change("primary_color")}" /></label>
+      <label>Secundaire huisstijl kleur <input type="color" value="${escapeAttr(company.secondary_color || "#d6a73c")}" onchange="${change("secondary_color")}" /></label>
+      <label>Max logo grootte MB <input type="number" min="1" max="20" value="${Number(company.max_logo_size_mb || 5)}" onchange="${change("max_logo_size_mb")}" /></label>
+      <label>Bedrijfswebsite <input value="${escapeAttr(company.website || "")}" placeholder="https://bedrijf.nl" onchange="${change("website")}" /></label>
+      <label>Bedrijfsadres <input value="${escapeAttr(company.address || "")}" placeholder="Straat 1, Plaats" onchange="${change("address")}" /></label>
+      <label>KvK nummer <input value="${escapeAttr(company.kvk_number || "")}" onchange="${change("kvk_number")}" /></label>
+      <label>BTW nummer <input value="${escapeAttr(company.vat_number || "")}" onchange="${change("vat_number")}" /></label>
+      <label>Telefoonnummer <input value="${escapeAttr(company.phone || "")}" onchange="${change("phone")}" /></label>
+      <label>E-mailadres <input type="email" value="${escapeAttr(company.email || company.contact_email || "")}" onchange="${change("email")}" /></label>
+      <label>IBAN <input value="${escapeAttr(company.iban || "")}" onchange="${change("iban")}" /></label>
+      <label>Betaaltermijn dagen <input type="number" min="0" value="${Number(company.payment_term_days ?? 14)}" onchange="${change("payment_term_days")}" /></label>
+      <label class="full">Standaard e-mailhandtekening <textarea rows="5" onchange="${change("default_email_signature")}">${escapeHtml(company.default_email_signature || company.email_signature || "")}</textarea></label>
+    </div>
+    <div class="branding-preview">
+      ${renderBrandMark(company, "branding-logo-preview")}
+      <div>
+        <strong>${escapeHtml(company.name || "-")}</strong>
+        <span>${escapeHtml(company.website || "Geen website")} - ${escapeHtml(company.address || "Geen adres")}</span>
+        <span>${escapeHtml([company.phone, company.email, company.iban].filter(Boolean).join(" - ") || "Geen contact- of betaalgegevens")}</span>
+        <span>Laatst gewijzigd: ${escapeHtml(String(company.branding_updated_at || "-").replace("T", " ").slice(0, 16))}</span>
+      </div>
+    </div>
+  </section>`;
+}
+
+function platformCompaniesSearchText() {
+  return String(ui.platformCompaniesSearch || "").trim().toLowerCase();
+}
+
+function setPlatformCompaniesSearch(value) {
+  ui.platformCompaniesSearch = value || "";
+  scheduleRender();
+}
+
+function platformCompaniesOpenState() {
+  ui.platformCompaniesOpen = ui.platformCompaniesOpen || {};
+  return ui.platformCompaniesOpen;
+}
+
+function togglePlatformCompanyDetails(companyId) {
+  const open = platformCompaniesOpenState();
+  open[companyId] = !open[companyId];
+  render();
+}
+
+function setAllPlatformCompaniesOpen(openAll) {
+  const open = platformCompaniesOpenState();
+  Object.keys(open).forEach((key) => delete open[key]);
+  if (openAll) filteredPlatformCompanies().forEach((company) => {
+    open[company.id] = true;
+  });
+  render();
+}
+
+function platformCompanySearchHaystack(company) {
+  normalizeCompanyBusinessDetails(company);
+  const users = companyUsers(company.id).map((user) => `${user.email || ""} ${user.name || ""}`).join(" ");
+  return [
+    company.name,
+    company.slug,
+    company.domain,
+    company.subdomain,
+    company.email,
+    company.contact_email,
+    company.kvk_number,
+    company.kvk,
+    company.chamber_of_commerce,
+    users,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function filteredPlatformCompanies() {
+  const search = platformCompaniesSearchText();
+  return platformCompanies()
+    .filter((company) => !search || platformCompanySearchHaystack(company).includes(search))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+}
+
+function platformCompanyStatus(company) {
+  const billing = platformBillingSummary(company);
+  if (["failed", "overdue"].includes(billing.status.statusKey)) return { label: "Achterstand betaling", className: "danger" };
+  if (company.blocked || company.active === false || ["paused", "cancelled"].includes(String(company.billing_status || "").toLowerCase())) return { label: "Gepauzeerd", className: "warn" };
+  return { label: "Actief", className: "ok" };
+}
+
+function renderPlatformCompanyUsersCompact(company) {
+  const users = companyUsers(company.id)
+    .filter((user) => !user.deleted && userRole(user) !== ROLES.PLATFORM_ADMIN)
+    .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")));
+  return `<section class="company-detail-section">
+    <h3>Gebruikers</h3>
+    <div class="compact-list">
+      ${users.length ? users.map((user) => `<div class="compact-row">
+        <span>${escapeHtml(user.name || "-")}</span>
+        <small>${escapeHtml(user.email || "-")}</small>
+        <em>${escapeHtml(roleLabel(userRole(user)))}</em>
+      </div>`).join("") : `<p class="muted">Geen gebruikers onder dit bedrijf.</p>`}
+    </div>
+  </section>`;
+}
+
+function renderPlatformCompanyModulesCompact(company) {
+  ensureCompanyModulesEnabled(company);
+  const active = moduleCatalog().filter((module) => company.modules_enabled?.[module.key] === true);
+  return `<section class="company-detail-section">
+    <h3>Modules</h3>
+    <p class="muted">${active.length}/${moduleCatalog().length} modules actief</p>
+    <div class="module-pill-list">
+      ${moduleCatalog().map((module) => `<span class="badge ${company.modules_enabled?.[module.key] === true ? "ok" : ""}">${escapeHtml(module.label)}</span>`).join("")}
+    </div>
+    <div class="button-row"><button class="btn secondary" type="button" onclick="setPlatformTab('Modules')">Modules beheren</button></div>
+  </section>`;
+}
+
+function renderPlatformCompanyAuditCompact(company) {
+  const logs = platformAuditLogs()
+    .filter((log) => String(log.company_id || "") === String(company.id))
+    .slice()
+    .reverse()
+    .slice(0, 5);
+  return `<section class="company-detail-section">
+    <h3>Auditinformatie</h3>
+    <div class="compact-list">
+      ${logs.length ? logs.map((log) => `<div class="compact-row">
+        <span>${escapeHtml(log.action || "-")}</span>
+        <small>${escapeHtml(String(log.created_at || "").replace("T", " ").slice(0, 16))}</small>
+        <em>${escapeHtml(log.user_name || "-")}</em>
+      </div>`).join("") : `<p class="muted">Nog geen auditregels voor dit bedrijf.</p>`}
+    </div>
+  </section>`;
+}
+
+function renderPlatformCompanyDetails(company, editable) {
+  const billing = platformBillingSummary(company);
+  const storageUsed = companyStorageUsageMb(company.id);
+  return `<div class="company-accordion-body">
+    <section class="company-detail-section">
+      <h3>Bedrijfsgegevens</h3>
+      <div class="form-grid">
+        <label>Domein/subdomein <input value="${escapeAttr(company.slug || "")}" ${editable ? `onchange="updateCompany('${company.id}', 'slug', this.value)"` : "readonly"} /></label>
+        <label>Pakket <select ${editable ? `onchange="updateCompany('${company.id}', 'subscription_package', this.value)"` : "disabled"}>${Object.keys(SUBSCRIPTION_PACKAGES).map((pkg) => `<option value="${pkg}" ${company.subscription_package === pkg ? "selected" : ""}>${pkg}</option>`).join("")}</select></label>
+        <label>Betaalstatus <select ${editable ? `onchange="updateCompany('${company.id}', 'billing_status', this.value)"` : "disabled"}>${["trial", "active", "overdue", "paused", "cancelled"].map((status) => `<option value="${status}" ${company.billing_status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
+        <label>Gebruikerslimiet <input type="number" min="1" value="${Number(company.user_limit || 10)}" ${editable ? `onchange="updateCompany('${company.id}', 'user_limit', this.value)"` : "readonly"} /></label>
+        <label>Opslaglimiet MB <input type="number" min="100" value="${Number(company.storage_limit_mb || 1024)}" ${editable ? `onchange="updateCompany('${company.id}', 'storage_limit_mb', this.value)"` : "readonly"} /></label>
+        <label>Werkbonnen <input value="${companyProjects(company.id).length}" readonly /></label>
+      </div>
+      ${editable ? `<div class="button-row"><button class="btn warn" type="button" onclick="toggleCompanyBlocked('${company.id}')">${company.blocked ? "Deblokkeren" : "Blokkeren"}</button><button class="btn secondary" type="button" onclick="updateCompany('${company.id}', 'active', ${company.active === false ? "true" : "false"})">${company.active === false ? "Activeren" : "Deactiveren"}</button><button class="btn danger" type="button" onclick="deleteCompany('${company.id}')">Verwijderen</button></div>` : ""}
+    </section>
+    ${editable ? renderCompanyBrandingPanel(company, true) : ""}
+    ${renderPlatformCompanyUsersCompact(company)}
+    ${renderPlatformCompanyModulesCompact(company)}
+    <section class="company-detail-section">
+      <h3>Facturatie</h3>
+      <div class="meta-grid">
+        <div class="meta"><span>Status</span><strong>${escapeHtml(billing.status.label)}</strong></div>
+        <div class="meta"><span>Openstaand</span><strong>${euro(billing.openAmount)}</strong></div>
+        <div class="meta"><span>Volgende factuur</span><strong>${billing.nextInvoice ? safeDate(billing.nextInvoice) : "Niet ingevuld"}</strong></div>
+        <div class="meta"><span>Prijsplan</span><strong>${escapeHtml(billing.pricePlan)}</strong></div>
+      </div>
+      <div class="button-row"><button class="btn secondary" type="button" onclick="setPlatformTab('Facturatie')">Facturatie openen</button></div>
+    </section>
+    <section class="company-detail-section">
+      <h3>Opslaggebruik</h3>
+      <div class="meta-grid">
+        <div class="meta"><span>Gebruik</span><strong>${storageUsed} MB</strong></div>
+        <div class="meta"><span>Limiet</span><strong>${Number(company.storage_limit_mb || 1024)} MB</strong></div>
+        <div class="meta"><span>Foto's</span><strong>${Math.round(storageUsed / 3)}</strong></div>
+      </div>
+    </section>
+    <section class="company-detail-section">
+      <h3>Rechten</h3>
+      <p class="muted">Rechten worden per gebruiker beheerd in Platform Admin > Rechten.</p>
+      <div class="button-row"><button class="btn secondary" type="button" onclick="setPlatformTab('Rechten')">Rechten beheren</button></div>
+    </section>
+    ${renderPlatformCompanyAuditCompact(company)}
+    <section class="company-detail-section">
+      <h3>Abonnement instellingen</h3>
+      <div class="meta-grid">
+        <div class="meta"><span>Pakket</span><strong>${escapeHtml(company.subscription_package || "basis")}</strong></div>
+        <div class="meta"><span>Gebruikers</span><strong>${companyUsers(company.id).length}/${Number(company.user_limit || 10)}</strong></div>
+        <div class="meta"><span>Trial tot</span><strong>${company.trial_until ? safeDate(company.trial_until) : "Niet ingesteld"}</strong></div>
+      </div>
+    </section>
+  </div>`;
+}
+
+function renderPlatformCompaniesTable(editable) {
+  const rows = filteredPlatformCompanies();
+  const openState = platformCompaniesOpenState();
+  return `<section class="platform-companies-page">
+    <section class="panel rights-intro">
+      <div class="article-head">
+        <div>
+          <h2>Bedrijven</h2>
+          <p>Bedrijven zijn standaard ingeklapt. Gebruik zoeken en klap alleen het bedrijf open dat u wilt beheren.</p>
+        </div>
+        <span class="badge">${rows.length} bedrijven</span>
+      </div>
+      <div class="company-search-actions">
+        <label>Zoek bedrijf
+          <input value="${escapeAttr(ui.platformCompaniesSearch || "")}" placeholder="Zoek bedrijf..." oninput="setPlatformCompaniesSearch(this.value)" />
+        </label>
+        <div class="button-row">
+          <button class="btn secondary" type="button" onclick="setAllPlatformCompaniesOpen(true)">Alles uitklappen</button>
+          <button class="btn secondary" type="button" onclick="setAllPlatformCompaniesOpen(false)">Alles inklappen</button>
+        </div>
+      </div>
+    </section>
+    <section class="company-card-list platform-company-accordion">
+      ${rows.length ? rows.map((company) => {
+        normalizeCompanyBusinessDetails(company);
+        const isOpen = openState[company.id] === true;
+        const logoPresent = companyHasLogo(company);
+        const status = platformCompanyStatus(company);
+        const billing = platformBillingSummary(company);
+        return `<article class="rights-company-card platform-company-card ${isOpen ? "open" : ""} ${status.className}">
+          <button class="platform-company-toggle" type="button" onclick="togglePlatformCompanyDetails('${company.id}')">
+            <span class="rights-caret">${isOpen ? "&dtrif;" : "&rtrif;"}</span>
+            <span class="platform-company-logo">${renderBrandMark(company, "brand-preview-mark")}</span>
+            <span class="platform-company-main">
+              <strong>${escapeHtml(company.name || "-")}</strong>
+              <small>${escapeHtml(status.label)} | ${escapeHtml(company.subscription_package || "basis")} pakket | ${companyUsers(company.id).length} gebruikers</small>
+            </span>
+            <span class="badge ${status.className}">${escapeHtml(status.label)}</span>
+            <span class="badge">${escapeHtml(company.subscription_package || "basis")}</span>
+            <span class="badge ${logoPresent ? "ok" : "warn"}">${logoPresent ? "Logo" : "Geen logo"}</span>
+            <span class="platform-company-attention">${["failed", "overdue"].includes(billing.status.statusKey) ? `Openstaand: ${euro(billing.openAmount)}` : `${companyUsers(company.id).length} users`}</span>
+          </button>
+          ${isOpen ? renderPlatformCompanyDetails(company, editable) : ""}
+        </article>`;
+      }).join("") : `<section class="panel empty">Geen bedrijven gevonden.</section>`}
+    </section>
+  </section>`;
+}
+
+function ensureWhatsAppPermissionFields() {
+  if (!USER_PERMISSION_GROUPS.some(([title]) => title === "WhatsApp")) {
+    USER_PERMISSION_GROUPS.push(["WhatsApp", [
+      ["can_use_whatsapp", "WhatsApp gebruiken"],
+      ["can_reply_whatsapp", "WhatsApp beantwoorden"],
+    ]]);
+  }
+}
+
+ensureWhatsAppPermissionFields();
+
+const WHATSAPP_TEMPLATE_SEEDS = [
+  ["appointment_confirmation", "Afspraakbevestiging", "Beste {{klant}}, hierbij bevestigen wij uw afspraak op {{datum}}. Met vriendelijke groet, {{bedrijf}}"],
+  ["maintenance_reminder", "Onderhoudsherinnering", "Beste {{klant}}, het is tijd voor onderhoud. Reageer op dit bericht om een afspraak te plannen. {{bedrijf}}"],
+  ["payment_link", "Betaallink", "Beste {{klant}}, u kunt betalen via deze link: {{link}}. Bedrag: {{bedrag}}. {{bedrijf}}"],
+  ["workorder_link", "Werkbon-link", "Beste {{klant}}, uw werkbon {{werkbon}} staat klaar: {{link}}. {{bedrijf}}"],
+  ["quote_link", "Offerte-link", "Beste {{klant}}, uw offerte staat klaar: {{link}}. {{bedrijf}}"],
+  ["invoice_link", "Factuur-link", "Beste {{klant}}, uw factuur staat klaar: {{link}}. {{bedrijf}}"],
+  ["free_message", "Vrij bericht", "Beste {{klant}},\n\nMet vriendelijke groet,\n{{bedrijf}}"],
+];
+
+function whatsappCompanyId() {
+  return currentCompanyId();
+}
+
+function canUseWhatsApp() {
+  if (!isCompanyModuleActive("whatsapp")) return false;
+  if (isCompanyAdmin()) return true;
+  if (isMechanic()) return hasMechanicPermission("can_use_whatsapp");
+  return isPlatformSuperAdmin() && isSupportMode();
+}
+
+function canReplyWhatsApp() {
+  if (!canUseWhatsApp()) return false;
+  if (isCompanyAdmin()) return true;
+  if (isMechanic()) return hasMechanicPermission("can_reply_whatsapp");
+  return isPlatformSuperAdmin() && isSupportMode();
+}
+
+function ensureWhatsAppState() {
+  ensureWhatsAppPermissionFields();
+  state.whatsappAccounts = state.whatsappAccounts || [];
+  state.whatsappConversations = state.whatsappConversations || [];
+  state.whatsappMessages = state.whatsappMessages || [];
+  state.whatsappTemplates = state.whatsappTemplates || [];
+  state.whatsappAuditLogs = state.whatsappAuditLogs || [];
+  const companyId = whatsappCompanyId();
+  if (!companyId) return;
+  WHATSAPP_TEMPLATE_SEEDS.forEach(([key, name, body]) => {
+    if (!state.whatsappTemplates.some((template) => strictRecordCompanyId(template) === companyId && template.key === key)) {
+      state.whatsappTemplates.push({
+        id: uid("wa-template"),
+        company_id: companyId,
+        companyId: companyId,
+        key,
+        name,
+        body,
+        active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+  });
+  if (!state.whatsappAccounts.some((account) => strictRecordCompanyId(account) === companyId)) {
+    state.whatsappAccounts.push({
+      id: uid("wa-account"),
+      company_id: companyId,
+      companyId: companyId,
+      provider: "whatsapp_business_api",
+      business_number: "",
+      phone_number_id: "",
+      business_account_id: "",
+      access_token_label: "",
+      webhook_url: "",
+      status: "niet gekoppeld",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }
+  const customers = activeCustomers();
+  if (customers.length && !state.whatsappConversations.some((conversation) => strictRecordCompanyId(conversation) === companyId)) {
+    const customer = customers[0];
+    const conversation = {
+      id: uid("wa-conv"),
+      company_id: companyId,
+      companyId: companyId,
+      customer_id: customer.id,
+      customer_name: customer.customer_name,
+      phone: customer.phone || "+31612345678",
+      status: "open",
+      source: "incoming",
+      unread_count: 1,
+      last_message_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    state.whatsappConversations.push(conversation);
+    state.whatsappMessages.push({
+      id: uid("wa-msg"),
+      company_id: companyId,
+      companyId: companyId,
+      conversation_id: conversation.id,
+      direction: "in",
+      from_name: customer.customer_name,
+      from_phone: conversation.phone,
+      to_phone: "",
+      body: "Goedemiddag, kunnen jullie een afspraak inplannen voor onderhoud?",
+      status: "ontvangen",
+      provider: "whatsapp_business_api_prepared",
+      created_at: new Date().toISOString(),
+      created_by: "",
+    });
+  }
+}
+
+function whatsappAccount() {
+  ensureWhatsAppState();
+  return companyScoped(state.whatsappAccounts || [])[0] || null;
+}
+
+function whatsappTemplates() {
+  ensureWhatsAppState();
+  return companyScoped(state.whatsappTemplates || []).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+}
+
+function whatsappConversations() {
+  ensureWhatsAppState();
+  return companyScoped(state.whatsappConversations || [])
+    .filter((conversation) => !conversation.deleted)
+    .sort((a, b) => String(b.last_message_at || b.updated_at || "").localeCompare(String(a.last_message_at || a.updated_at || "")));
+}
+
+function whatsappMessages(conversationId) {
+  ensureWhatsAppState();
+  return companyScoped(state.whatsappMessages || [])
+    .filter((message) => message.conversation_id === conversationId)
+    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+}
+
+function whatsappVisibleProjects() {
+  return visibleProjects().sort((a, b) => String(b.createdAt || b.created_at || "").localeCompare(String(a.createdAt || a.created_at || "")));
+}
+
+function whatsappVisiblePlanning() {
+  return companyScoped(state.planningEvents || []).sort((a, b) => String(b.start_datetime || "").localeCompare(String(a.start_datetime || "")));
+}
+
+function whatsappVisibleInvoices() {
+  return companyScoped(state.payments || []).sort((a, b) => String(b.created_at || b.paid_at || "").localeCompare(String(a.created_at || a.paid_at || "")));
+}
+
+function whatsappConversationLabel(conversation) {
+  const customer = conversation.customer_id ? byId(state.customers || [], conversation.customer_id) : null;
+  return customer?.customer_name || conversation.customer_name || conversation.phone || "Onbekend gesprek";
+}
+
+function whatsappStatusLabel(status) {
+  if (status === "handled") return "Afgehandeld";
+  if (status === "open") return "Open";
+  return status || "Inbox";
+}
+
+function setWhatsAppTab(tab) {
+  ui.whatsappTab = tab;
+  render();
+}
+
+function selectWhatsAppConversation(conversationId) {
+  ui.selectedWhatsAppConversationId = conversationId;
+  const conversation = byId(state.whatsappConversations || [], conversationId);
+  if (conversation && isSameCompany(conversation)) {
+    conversation.unread_count = 0;
+    conversation.updated_at = new Date().toISOString();
+    saveState();
+  }
+  render();
+}
+
+function markWhatsAppConversation(conversationId, status) {
+  const conversation = byId(state.whatsappConversations || [], conversationId);
+  if (!conversation || !isSameCompany(conversation) || !canReplyWhatsApp()) return;
+  conversation.status = status;
+  conversation.updated_at = new Date().toISOString();
+  logWhatsAppAudit(status === "handled" ? "gesprek afgehandeld" : "gesprek heropend", conversationId);
+  saveState();
+  render();
+}
+
+function linkWhatsAppCustomer(conversationId, customerId) {
+  const conversation = byId(state.whatsappConversations || [], conversationId);
+  const customer = byId(state.customers || [], customerId);
+  if (!conversation || !customer || !isSameCompany(conversation) || !isSameCompany(customer) || !canReplyWhatsApp()) return;
+  conversation.customer_id = customer.id;
+  conversation.customer_name = customer.customer_name;
+  conversation.phone = customer.phone || conversation.phone || "";
+  conversation.updated_at = new Date().toISOString();
+  logWhatsAppAudit("klant gekoppeld", conversationId, customer.customer_name);
+  saveState();
+  render();
+}
+
+function linkWhatsAppWorkorder(conversationId, projectId) {
+  const conversation = byId(state.whatsappConversations || [], conversationId);
+  const project = byId(state.projects || [], projectId);
+  if (!conversation || !project || !isSameCompany(conversation) || !canAccessProject(project) || !canReplyWhatsApp()) return;
+  conversation.related_workorder_id = project.id;
+  conversation.related_project_id = project.id;
+  conversation.updated_at = new Date().toISOString();
+  logWhatsAppAudit("werkbon gekoppeld", conversationId, project.projectNumber || project.id);
+  saveState();
+  render();
+}
+
+function logWhatsAppAudit(action, conversationId = "", details = "") {
+  ensureWhatsAppState();
+  state.whatsappAuditLogs.push({
+    id: uid("wa-audit"),
+    company_id: whatsappCompanyId(),
+    companyId: whatsappCompanyId(),
+    user_id: currentUser()?.id || "",
+    user_name: currentUser()?.name || "",
+    action,
+    conversation_id: conversationId,
+    details,
+    created_at: new Date().toISOString(),
+  });
+}
+
+function fillWhatsAppTemplate(selectEl) {
+  const form = selectEl.closest("form");
+  const template = byId(state.whatsappTemplates || [], selectEl.value);
+  const body = form?.querySelector("[name='body']");
+  if (body && template) body.value = whatsappApplyTemplate(template.body, {});
+}
+
+function whatsappApplyTemplate(body, context = {}) {
+  const company = currentCompany();
+  const values = {
+    klant: context.customer?.customer_name || context.customer_name || "klant",
+    bedrijf: company?.name || "WerkbonSysteem.nl",
+    datum: context.date || safeDate(context.start_datetime || context.created_at || new Date().toISOString()),
+    werkbon: context.project?.projectNumber || context.project?.id || context.workorder_number || "-",
+    factuur: context.invoice_number || context.invoice?.invoice_number || "-",
+    bedrag: context.amount ? euro(context.amount) : "-",
+    link: context.link || "https://werkbonsysteem.nl",
+  };
+  return String(body || "").replace(/\{\{(\w+)\}\}/g, (_, key) => values[key] ?? "");
+}
+
+function sendWhatsAppReply(event, conversationId) {
+  event.preventDefault();
+  if (!canReplyWhatsApp()) return alert("Geen rechten om WhatsApp-berichten te beantwoorden.");
+  const conversation = byId(state.whatsappConversations || [], conversationId);
+  if (!conversation || !isSameCompany(conversation)) return;
+  const form = new FormData(event.target);
+  const body = String(form.get("body") || "").trim();
+  if (!body) return alert("Bericht is verplicht.");
+  const now = new Date().toISOString();
+  state.whatsappMessages.push({
+    id: uid("wa-msg"),
+    company_id: strictRecordCompanyId(conversation),
+    companyId: strictRecordCompanyId(conversation),
+    conversation_id: conversation.id,
+    direction: "out",
+    from_name: currentCompany()?.name || "Kantoor",
+    from_phone: whatsappAccount()?.business_number || "",
+    to_phone: conversation.phone || "",
+    body,
+    status: "verzonden",
+    provider: "whatsapp_business_api_prepared",
+    template_id: String(form.get("template_id") || ""),
+    created_at: now,
+    created_by: currentUser()?.id || "",
+  });
+  conversation.status = "open";
+  conversation.unread_count = 0;
+  conversation.last_message_at = now;
+  conversation.updated_at = now;
+  logWhatsAppAudit("bericht verzonden", conversation.id);
+  saveState();
+  event.target.reset();
+  render();
+}
+
+function startWhatsAppConversation(event) {
+  event.preventDefault();
+  if (!canReplyWhatsApp()) return alert("Geen rechten om WhatsApp-gesprekken te starten.");
+  const form = new FormData(event.target);
+  const customerId = String(form.get("customer_id") || "");
+  const customer = customerId ? byId(state.customers || [], customerId) : null;
+  if (customer && !isSameCompany(customer)) return;
+  const phone = String(form.get("phone") || customer?.phone || "").trim();
+  const body = String(form.get("body") || "").trim();
+  if (!phone) return alert("Telefoonnummer is verplicht.");
+  if (!body) return alert("Bericht is verplicht.");
+  const now = new Date().toISOString();
+  const conversation = {
+    id: uid("wa-conv"),
+    company_id: whatsappCompanyId(),
+    companyId: whatsappCompanyId(),
+    customer_id: customer?.id || "",
+    customer_name: customer?.customer_name || String(form.get("customer_name") || phone),
+    phone,
+    status: "open",
+    source: "portal",
+    related_workorder_id: String(form.get("project_id") || ""),
+    related_project_id: String(form.get("project_id") || ""),
+    related_planning_id: String(form.get("planning_id") || ""),
+    related_invoice_id: String(form.get("invoice_id") || ""),
+    unread_count: 0,
+    last_message_at: now,
+    created_at: now,
+    updated_at: now,
+    created_by: currentUser()?.id || "",
+  };
+  state.whatsappConversations.push(conversation);
+  state.whatsappMessages.push({
+    id: uid("wa-msg"),
+    company_id: whatsappCompanyId(),
+    companyId: whatsappCompanyId(),
+    conversation_id: conversation.id,
+    direction: "out",
+    from_name: currentCompany()?.name || "Kantoor",
+    from_phone: whatsappAccount()?.business_number || "",
+    to_phone: phone,
+    body,
+    status: "verzonden",
+    provider: "whatsapp_business_api_prepared",
+    template_id: String(form.get("template_id") || ""),
+    created_at: now,
+    created_by: currentUser()?.id || "",
+  });
+  ui.selectedWhatsAppConversationId = conversation.id;
+  ui.whatsappTab = "Open gesprekken";
+  logWhatsAppAudit("gesprek gestart", conversation.id, phone);
+  saveState();
+  render();
+}
+
+function saveWhatsAppTemplate(event, templateId = "") {
+  event.preventDefault();
+  if (!isCompanyAdmin() && !(isPlatformSuperAdmin() && isSupportMode())) return;
+  const form = new FormData(event.target);
+  const now = new Date().toISOString();
+  const target = templateId ? byId(state.whatsappTemplates || [], templateId) : null;
+  if (target && !isSameCompany(target)) return;
+  const row = target || {
+    id: uid("wa-template"),
+    company_id: whatsappCompanyId(),
+    companyId: whatsappCompanyId(),
+    key: slugify(form.get("name") || "template"),
+    created_at: now,
+  };
+  row.name = String(form.get("name") || "").trim();
+  row.body = String(form.get("body") || "").trim();
+  row.active = form.get("active") === "true";
+  row.updated_at = now;
+  if (!row.name || !row.body) return alert("Naam en berichttekst zijn verplicht.");
+  if (!target) state.whatsappTemplates.push(row);
+  logWhatsAppAudit(target ? "template gewijzigd" : "template aangemaakt", "", row.name);
+  saveState();
+  render();
+}
+
+function deleteWhatsAppTemplate(templateId) {
+  const template = byId(state.whatsappTemplates || [], templateId);
+  if (!template || !isSameCompany(template) || !isCompanyAdmin()) return;
+  if (!confirm("Template verwijderen?")) return;
+  state.whatsappTemplates = (state.whatsappTemplates || []).filter((item) => item.id !== templateId);
+  logWhatsAppAudit("template verwijderd", "", template.name);
+  saveState();
+  render();
+}
+
+function saveWhatsAppSettings(event) {
+  event.preventDefault();
+  if (!isCompanyAdmin() && !(isPlatformSuperAdmin() && isSupportMode())) return;
+  const account = whatsappAccount();
+  if (!account) return;
+  const form = new FormData(event.target);
+  ["provider", "business_number", "phone_number_id", "business_account_id", "access_token_label", "webhook_url", "status"].forEach((field) => {
+    account[field] = String(form.get(field) || "").trim();
+  });
+  account.updated_at = new Date().toISOString();
+  logWhatsAppAudit("instellingen opgeslagen", "", account.business_number);
+  saveState();
+  render();
+}
+
+function renderWhatsAppStartForm() {
+  const customers = activeCustomers();
+  const projects = whatsappVisibleProjects();
+  const planning = whatsappVisiblePlanning();
+  const invoices = whatsappVisibleInvoices();
+  const templates = whatsappTemplates().filter((template) => template.active !== false);
+  return `<section class="panel whatsapp-start-panel">
+    <h2>Nieuw WhatsApp gesprek</h2>
+    <form class="whatsapp-start-form" onsubmit="startWhatsAppConversation(event)">
+      <div class="form-grid">
+        <label>Klant <select name="customer_id" onchange="const c=byId(state.customers||[],this.value); const f=this.form; if(c){f.phone.value=c.phone||''; f.customer_name.value=c.customer_name||'';}"><option value="">Vrij nummer</option>${customers.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.customer_name)} - ${escapeHtml(customer.phone || "geen telefoon")}</option>`).join("")}</select></label>
+        <label>Klantnaam <input name="customer_name" placeholder="Naam bij vrij nummer" /></label>
+        <label>Telefoonnummer <input name="phone" required placeholder="+316..." /></label>
+        <label>Template <select name="template_id" onchange="fillWhatsAppTemplate(this)"><option value="">Vrij bericht</option>${templates.map((template) => `<option value="${template.id}">${escapeHtml(template.name)}</option>`).join("")}</select></label>
+        <label>Werkbon koppelen <select name="project_id"><option value="">Geen werkbon</option>${projects.map((project) => `<option value="${project.id}">${escapeHtml(project.projectNumber || project.id)} - ${escapeHtml(project.customer || project.customer_name || "")}</option>`).join("")}</select></label>
+        <label>Afspraak koppelen <select name="planning_id"><option value="">Geen afspraak</option>${planning.slice(0, 80).map((row) => `<option value="${row.id}">${safeDate(row.start_datetime)} - ${escapeHtml(row.customer_name || row.title || "")}</option>`).join("")}</select></label>
+        <label>Factuur/betaling koppelen <select name="invoice_id"><option value="">Geen factuur</option>${invoices.slice(0, 80).map((row) => `<option value="${row.id}">${escapeHtml(row.invoice_number || row.id)} - ${euro(row.amount || row.total_inc_vat || 0)}</option>`).join("")}</select></label>
+      </div>
+      <label>Bericht <textarea name="body" rows="4" required placeholder="Schrijf bericht of kies template"></textarea></label>
+      <button class="btn success" type="submit">Gesprek starten</button>
+    </form>
+  </section>`;
+}
+
+function renderWhatsAppConversationList(rows) {
+  return `<div class="whatsapp-list">
+    ${rows.length ? rows.map((conversation) => {
+      const selected = ui.selectedWhatsAppConversationId === conversation.id;
+      return `<button class="whatsapp-conversation-card ${selected ? "active" : ""}" type="button" onclick="selectWhatsAppConversation('${conversation.id}')">
+        <strong>${escapeHtml(whatsappConversationLabel(conversation))}</strong>
+        <span>${escapeHtml(conversation.phone || "-")}</span>
+        <small>${escapeHtml(whatsappStatusLabel(conversation.status))} - ${safeDate(conversation.last_message_at || conversation.updated_at)}</small>
+        ${conversation.unread_count ? `<em>${conversation.unread_count} ongelezen</em>` : ""}
+      </button>`;
+    }).join("") : `<div class="empty">Geen gesprekken gevonden.</div>`}
+  </div>`;
+}
+
+function renderWhatsAppThread(conversation) {
+  if (!conversation) return `<section class="panel whatsapp-thread empty"><h2>Selecteer een gesprek</h2><p>Kies links een klantgesprek of start een nieuw WhatsApp gesprek.</p></section>`;
+  const messages = whatsappMessages(conversation.id);
+  const customers = activeCustomers();
+  const projects = whatsappVisibleProjects();
+  const customer = conversation.customer_id ? byId(state.customers || [], conversation.customer_id) : null;
+  const project = conversation.related_workorder_id ? byId(state.projects || [], conversation.related_workorder_id) : null;
+  return `<section class="panel whatsapp-thread">
+    <div class="article-head">
+      <div>
+        <h2>${escapeHtml(whatsappConversationLabel(conversation))}</h2>
+        <p>${escapeHtml(conversation.phone || "-")} - ${escapeHtml(whatsappStatusLabel(conversation.status))}</p>
+      </div>
+      <div class="button-row">
+        ${conversation.status === "handled" ? `<button class="btn secondary" type="button" onclick="markWhatsAppConversation('${conversation.id}', 'open')">Heropenen</button>` : `<button class="btn success" type="button" onclick="markWhatsAppConversation('${conversation.id}', 'handled')">Afhandelen</button>`}
+      </div>
+    </div>
+    <div class="whatsapp-link-grid">
+      <label>Klant koppelen <select onchange="linkWhatsAppCustomer('${conversation.id}', this.value)"><option value="">${customer ? escapeHtml(customer.customer_name) : "Kies klant"}</option>${customers.map((row) => `<option value="${row.id}" ${conversation.customer_id === row.id ? "selected" : ""}>${escapeHtml(row.customer_name)}</option>`).join("")}</select></label>
+      <label>Werkbon koppelen <select onchange="linkWhatsAppWorkorder('${conversation.id}', this.value)"><option value="">${project ? escapeHtml(project.projectNumber || project.id) : "Kies werkbon"}</option>${projects.map((row) => `<option value="${row.id}" ${conversation.related_workorder_id === row.id ? "selected" : ""}>${escapeHtml(row.projectNumber || row.id)} - ${escapeHtml(row.customer || row.customer_name || "")}</option>`).join("")}</select></label>
+    </div>
+    <div class="whatsapp-message-list">
+      ${messages.map((message) => `<div class="whatsapp-message ${message.direction === "out" ? "out" : "in"}">
+        <span>${escapeHtml(message.direction === "out" ? "Kantoor" : message.from_name || conversation.customer_name || "Klant")} - ${safeDate(message.created_at)}</span>
+        <p>${escapeHtml(message.body || "")}</p>
+        <small>${escapeHtml(message.status || "")}</small>
+      </div>`).join("")}
+    </div>
+    ${canReplyWhatsApp() ? `<form class="whatsapp-composer" onsubmit="sendWhatsAppReply(event, '${conversation.id}')">
+      <label>Antwoord <textarea name="body" rows="3" required></textarea></label>
+      <input type="hidden" name="template_id" value="" />
+      <button class="btn success" type="submit">Versturen</button>
+    </form>` : `<p class="muted">Je hebt geen rechten om WhatsApp-berichten te beantwoorden.</p>`}
+  </section>`;
+}
+
+function renderWhatsAppConversations(statusFilter) {
+  let rows = whatsappConversations();
+  if (statusFilter === "inbox") rows = rows.filter((conversation) => Number(conversation.unread_count || 0) > 0 || conversation.source === "incoming");
+  if (statusFilter === "open") rows = rows.filter((conversation) => conversation.status !== "handled");
+  if (statusFilter === "handled") rows = rows.filter((conversation) => conversation.status === "handled");
+  const selected = byId(rows, ui.selectedWhatsAppConversationId) || rows[0] || null;
+  if (selected && ui.selectedWhatsAppConversationId !== selected.id) ui.selectedWhatsAppConversationId = selected.id;
+  return `<div class="whatsapp-layout">
+    ${renderWhatsAppConversationList(rows)}
+    ${renderWhatsAppThread(selected)}
+  </div>
+  ${canReplyWhatsApp() ? renderWhatsAppStartForm() : ""}`;
+}
+
+function renderWhatsAppTemplates() {
+  const templates = whatsappTemplates();
+  return `<section class="whatsapp-template-page">
+    <section class="panel">
+      <div class="article-head"><div><h2>Templates</h2><p>Berichttemplates voor afspraakbevestiging, onderhoud, betaal-, werkbon-, offerte- en factuurlinks.</p></div></div>
+      <div class="whatsapp-template-grid">
+        ${templates.map((template) => `<form class="whatsapp-template-card" onsubmit="saveWhatsAppTemplate(event, '${template.id}')">
+          <label>Naam <input name="name" value="${escapeAttr(template.name || "")}" /></label>
+          <label>Actief <select name="active"><option value="true" ${template.active !== false ? "selected" : ""}>Ja</option><option value="false" ${template.active === false ? "selected" : ""}>Nee</option></select></label>
+          <label>Bericht <textarea name="body" rows="5">${escapeHtml(template.body || "")}</textarea></label>
+          <div class="button-row"><button class="btn success" type="submit">Opslaan</button><button class="btn danger" type="button" onclick="deleteWhatsAppTemplate('${template.id}')">Verwijderen</button></div>
+        </form>`).join("")}
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Template toevoegen</h2>
+      <form class="whatsapp-template-card" onsubmit="saveWhatsAppTemplate(event)">
+        <label>Naam <input name="name" required /></label>
+        <input type="hidden" name="active" value="true" />
+        <label>Bericht <textarea name="body" rows="5" required></textarea></label>
+        <button class="btn success" type="submit">Template toevoegen</button>
+      </form>
+    </section>
+  </section>`;
+}
+
+function renderWhatsAppSettings() {
+  const account = whatsappAccount();
+  return `<section class="panel whatsapp-settings">
+    <div class="article-head">
+      <div>
+        <h2>WhatsApp Business API instellingen</h2>
+        <p>Per bedrijf eigen nummer en API-koppeling. Tokens worden hier niet plat opgeslagen; alleen een label/referentie.</p>
+      </div>
+      <span class="badge ${account?.status === "gekoppeld" ? "ok" : "warn"}">${escapeHtml(account?.status || "niet gekoppeld")}</span>
+    </div>
+    <form onsubmit="saveWhatsAppSettings(event)">
+      <div class="form-grid">
+        <label>Provider <select name="provider"><option value="whatsapp_business_api" ${account?.provider === "whatsapp_business_api" ? "selected" : ""}>WhatsApp Business API</option><option value="meta_cloud_api" ${account?.provider === "meta_cloud_api" ? "selected" : ""}>Meta Cloud API</option></select></label>
+        <label>Business nummer <input name="business_number" value="${escapeAttr(account?.business_number || "")}" placeholder="+31..." /></label>
+        <label>Phone Number ID <input name="phone_number_id" value="${escapeAttr(account?.phone_number_id || "")}" /></label>
+        <label>Business Account ID <input name="business_account_id" value="${escapeAttr(account?.business_account_id || "")}" /></label>
+        <label>Token label/referentie <input name="access_token_label" value="${escapeAttr(account?.access_token_label || "")}" placeholder="Secret manager key" /></label>
+        <label>Webhook URL <input name="webhook_url" value="${escapeAttr(account?.webhook_url || "")}" placeholder="https://..." /></label>
+        <label>Status <select name="status">${["niet gekoppeld", "testmodus", "gekoppeld", "fout"].map((status) => `<option value="${status}" ${account?.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
+      </div>
+      <button class="btn success" type="submit">Instellingen opslaan</button>
+    </form>
+  </section>`;
+}
+
+function renderWhatsAppAudit() {
+  const logs = companyScoped(state.whatsappAuditLogs || []).slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).slice(0, 20);
+  return `<section class="panel"><h2>Laatste WhatsApp acties</h2><div class="table-wrap"><table><thead><tr><th>Datum</th><th>Gebruiker</th><th>Actie</th><th>Details</th></tr></thead><tbody>${logs.map((log) => `<tr><td>${safeDate(log.created_at)}</td><td>${escapeHtml(log.user_name || "-")}</td><td>${escapeHtml(log.action || "-")}</td><td>${escapeHtml(log.details || "-")}</td></tr>`).join("")}</tbody></table></div></section>`;
+}
+
+function renderWhatsAppModule() {
+  if (!isCompanyModuleActive("whatsapp")) return moduleInactiveMessage();
+  ensureWhatsAppState();
+  if (!canUseWhatsApp()) return `<section class="panel empty"><h2>Geen toegang tot WhatsApp.</h2><p>Kantoor kan deze rechten per medewerker instellen.</p></section>`;
+  const account = whatsappAccount();
+  ui.whatsappTab = ui.whatsappTab || "Inbox";
+  const tabs = ["Inbox", "Open gesprekken", "Afgehandelde gesprekken", "Templates", "Instellingen"];
+  const unread = whatsappConversations().reduce((sum, conversation) => sum + Number(conversation.unread_count || 0), 0);
+  let body = "";
+  if (ui.whatsappTab === "Inbox") body = renderWhatsAppConversations("inbox");
+  if (ui.whatsappTab === "Open gesprekken") body = renderWhatsAppConversations("open");
+  if (ui.whatsappTab === "Afgehandelde gesprekken") body = renderWhatsAppConversations("handled");
+  if (ui.whatsappTab === "Templates") body = renderWhatsAppTemplates();
+  if (ui.whatsappTab === "Instellingen") body = `${renderWhatsAppSettings()}${renderWhatsAppAudit()}`;
+  return `<section class="whatsapp-shell">
+    <section class="office-page-head">
+      <div>
+        <h2>WhatsApp</h2>
+        <p>Lees, beantwoord en koppel klantgesprekken binnen ${escapeHtml(currentCompany()?.name || "het bedrijf")}.</p>
+      </div>
+      <div class="button-row">
+        <span class="badge ${account?.status === "gekoppeld" ? "ok" : "warn"}">${escapeHtml(account?.business_number || "Geen nummer gekoppeld")}</span>
+        <span class="badge">${unread} ongelezen</span>
+      </div>
+    </section>
+    <div class="tabs">${tabs.map((tab) => `<button class="${ui.whatsappTab === tab ? "active" : ""}" type="button" onclick="setWhatsAppTab('${tab}')">${tab}</button>`).join("")}</div>
+    ${body}
+  </section>`;
+}
+
+function customerScopedRows() {
+  return companyScoped(state.customers || []).filter((customer) => customer.active !== false && !customer.deleted);
+}
+
+function customerAppliances(customer) {
+  const customerId = customer?.id || "";
+  const addressKey = String(`${customer?.address || ""} ${customer?.postal_code || ""} ${customer?.city || ""}`).trim().toLowerCase();
+  const rows = applianceRows().filter((appliance) => {
+    const applianceAddress = String(`${appliance.address || ""} ${appliance.postal_code || ""} ${appliance.city || ""}`).trim().toLowerCase();
+    return appliance.customer_id === customerId || (addressKey && applianceAddress === addressKey);
+  });
+  (customer?.appliances || []).forEach((appliance) => {
+    if (!rows.some((row) => row.id === appliance.id)) rows.push({ ...appliance, customer_id: customerId, company_id: strictRecordCompanyId(customer), companyId: strictRecordCompanyId(customer) });
+  });
+  return rows;
+}
+
+function customerWorkorders(customer) {
+  const customerId = customer?.id || "";
+  const customerName = String(customer?.customer_name || "").toLowerCase();
+  return visibleProjects().filter((project) => {
+    const projectCustomerName = String(project.customer || project.customer_name || "").toLowerCase();
+    return project.customer_id === customerId || project.customerId === customerId || (customerName && projectCustomerName === customerName);
+  });
+}
+
+function customerInvoices(customer) {
+  const customerId = customer?.id || "";
+  return companyScoped(state.payments || []).filter((payment) => payment.customer_id === customerId);
+}
+
+function customerQuotes(customer) {
+  const customerId = customer?.id || "";
+  return companyScoped(state.quotes || []).filter((quote) => quote.customer_id === customerId);
+}
+
+function customerEmailMessages(customer) {
+  const customerId = customer?.id || "";
+  const ids = new Set(customer?.email_message_ids || []);
+  return companyScoped(state.emailMessages || [])
+    .filter((message) => message.customer_id === customerId || ids.has(message.id))
+    .sort((a, b) => String(b.received_at || b.sent_at || b.created_at || "").localeCompare(String(a.received_at || a.sent_at || a.created_at || "")));
+}
+
+function customerWhatsAppMessages(customer) {
+  const customerId = customer?.id || "";
+  const conversations = companyScoped(state.whatsappConversations || []).filter((conversation) => conversation.customer_id === customerId);
+  const conversationIds = new Set(conversations.map((conversation) => conversation.id));
+  return companyScoped(state.whatsappMessages || [])
+    .filter((message) => conversationIds.has(message.conversation_id))
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+}
+
+function renderCustomerCommunication(customer) {
+  const emails = customerEmailMessages(customer);
+  const whatsapps = customerWhatsAppMessages(customer);
+  const workorders = customerWorkorders(customer);
+  const quotes = customerQuotes(customer);
+  const invoices = customerInvoices(customer);
+  return `<section class="panel customer-communication">
+    <h2>Communicatie</h2>
+    <div class="tabs communication-tabs">
+      <button class="active" type="button">Communicatie</button>
+    </div>
+    <section class="communication-grid">
+      <article>
+        <h3>Inkomende e-mails</h3>
+        ${emails.filter((message) => message.folder !== "Verzonden" && !message.sent_at).length ? emails.filter((message) => message.folder !== "Verzonden" && !message.sent_at).map((message) => `<p><strong>${escapeHtml(message.subject || "(geen onderwerp)")}</strong><br>${escapeHtml(message.from_email || "")} - ${safeDate(message.received_at || message.created_at)}</p>`).join("") : `<p class="muted">Geen inkomende e-mails.</p>`}
+      </article>
+      <article>
+        <h3>Verzonden e-mails</h3>
+        ${emails.filter((message) => message.folder === "Verzonden" || message.sent_at).length ? emails.filter((message) => message.folder === "Verzonden" || message.sent_at).map((message) => `<p><strong>${escapeHtml(message.subject || "(geen onderwerp)")}</strong><br>${escapeHtml(message.to_email || "")} - ${safeDate(message.sent_at || message.created_at)}</p>`).join("") : `<p class="muted">Geen verzonden e-mails.</p>`}
+      </article>
+      <article>
+        <h3>WhatsApp berichten</h3>
+        ${whatsapps.length ? whatsapps.slice(0, 8).map((message) => `<p><strong>${escapeHtml(message.direction === "out" ? "Kantoor" : "Klant")}</strong><br>${escapeHtml(message.body || message.text || "")}<br>${safeDate(message.created_at)}</p>`).join("") : `<p class="muted">Geen WhatsApp berichten.</p>`}
+      </article>
+      <article>
+        <h3>Gekoppelde werkbonnen</h3>
+        ${workorders.length ? workorders.slice(0, 8).map((project) => `<p>${escapeHtml(workorderNumber(project))} - ${escapeHtml(project.status || "-")}</p>`).join("") : `<p class="muted">Geen werkbonnen gekoppeld.</p>`}
+      </article>
+      <article>
+        <h3>Gekoppelde offertes</h3>
+        ${quotes.length ? quotes.slice(0, 8).map((quote) => `<p>${escapeHtml(quote.quote_number || quote.id)} - ${escapeHtml(quote.status || "-")}</p>`).join("") : `<p class="muted">Geen offertes gekoppeld.</p>`}
+      </article>
+      <article>
+        <h3>Gekoppelde facturen</h3>
+        ${invoices.length ? invoices.slice(0, 8).map((invoice) => `<p>${escapeHtml(invoice.invoice_number || invoice.id)} - ${escapeHtml(invoice.status || invoice.payment_status || "-")}</p>`).join("") : `<p class="muted">Geen facturen gekoppeld.</p>`}
+      </article>
+    </section>
+  </section>`;
+}
+
+function customerLastVisit(customer) {
+  const dates = customerWorkorders(customer)
+    .map((project) => project.completedAt || project.completed_at || project.date || project.createdAt || project.created_at)
+    .filter(Boolean)
+    .sort();
+  return dates.length ? dates[dates.length - 1] : "";
+}
+
+function customerOpenWorkorders(customer) {
+  return customerWorkorders(customer).filter((project) => !isProjectCompleted(project));
+}
+
+function customerMaintenanceNeeded(customer) {
+  return ["Binnenkort nodig", "Te laat"].includes(customerMaintenanceStatus(customer).status);
+}
+
+function addMonthsToDate(value, months) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + Number(months || 12));
+  return next.toISOString().slice(0, 10);
+}
+
+function daysUntilDate(dateValue) {
+  if (!dateValue) return null;
+  const today = new Date(new Date().toISOString().slice(0, 10));
+  const target = new Date(String(dateValue).slice(0, 10));
+  if (Number.isNaN(target.getTime())) return null;
+  return Math.ceil((target - today) / 86400000);
+}
+
+function customerLastMaintenanceDate(customer) {
+  const applianceDates = customerAppliances(customer).map((appliance) => appliance.last_service_date || appliance.service_date).filter(Boolean);
+  const workorderDates = customerWorkorders(customer)
+    .filter((project) => isProjectCompleted(project))
+    .map((project) => project.completedAt || project.completed_at || project.date)
+    .filter(Boolean);
+  const dates = [...applianceDates, ...workorderDates].sort();
+  return dates.length ? dates[dates.length - 1].slice(0, 10) : "";
+}
+
+function customerMaintenanceInterval(customer) {
+  return Math.max(1, Number(customer.maintenance_interval_months ?? 12));
+}
+
+function customerNextMaintenanceDate(customer) {
+  if (customer.next_maintenance_date) return String(customer.next_maintenance_date).slice(0, 10);
+  return addMonthsToDate(customerLastMaintenanceDate(customer), customerMaintenanceInterval(customer));
+}
+
+function customerMaintenanceStatus(customer) {
+  const next = customerNextMaintenanceDate(customer);
+  const days = daysUntilDate(next);
+  if (days === null) return { status: "Niet nodig", days: null, next };
+  if (days < 0) return { status: "Te laat", days, next };
+  if (days <= 30) return { status: "Binnenkort nodig", days, next };
+  return { status: "Niet nodig", days, next };
+}
+
+function maintenanceReminderEnabledForCompany() {
+  const settings = companySettings();
+  return settings.maintenance_reminders_enabled !== false && isCompanyModuleActive("maintenance_contracts");
+}
+
+function customerReminderEnabled(customer) {
+  return customer.maintenance_reminder_enabled === true;
+}
+
+function ensureMaintenanceReminderTemplate() {
+  ensureEmailData();
+  const companyId = currentCompanyId();
+  if (!companyId) return null;
+  let template = companyScoped(state.emailTemplates || []).find((item) => String(item.name || "").toLowerCase() === "onderhoudsherinnering");
+  if (!template) {
+    const now = new Date().toISOString();
+    template = {
+      id: uid("mailtpl"),
+      company_id: companyId,
+      companyId: companyId,
+      name: "Onderhoudsherinnering",
+      subject: "Onderhoudsherinnering",
+      body: "Beste {{klant}},\n\nVolgens onze planning is onderhoud nodig rond {{datum}}. Neem contact met ons op om een afspraak te maken.\n\nMet vriendelijke groet,\n{{bedrijf}}",
+      active: true,
+      created_at: now,
+      updated_at: now,
+    };
+    state.emailTemplates.push(template);
+  }
+  return template;
+}
+
+function renderMaintenanceReminderBody(template, customer, status) {
+  const company = currentCompany();
+  return String(template?.body || "")
+    .replaceAll("{{klant}}", customer.customer_name || "klant")
+    .replaceAll("{{datum}}", status.next ? safeDate(status.next) : "binnenkort")
+    .replaceAll("{{bedrijf}}", company?.name || "WerkbonSysteem.nl");
+}
+
+function sendMaintenanceReminderEmail(customer, triggerLabel = "handmatig") {
+  if (!maintenanceReminderEnabledForCompany()) return false;
+  if (!customer?.email) return false;
+  const status = customerMaintenanceStatus(customer);
+  const template = ensureMaintenanceReminderTemplate();
+  const now = new Date().toISOString();
+  const company = currentCompany();
+  const message = {
+    id: uid("mail"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    folder: "Verzonden",
+    from_name: currentUser()?.name || company?.name || "",
+    from_email: currentUser()?.email || "",
+    to_email: customer.email,
+    subject: `${template?.subject || "Onderhoudsherinnering"} - ${company?.name || "WerkbonSysteem.nl"}`,
+    body: renderMaintenanceReminderBody(template, customer, status),
+    received_at: now,
+    sent_at: now,
+    is_read: true,
+    has_attachments: Boolean(companyLogoSrc(company)),
+    attachments: companyLogoSrc(company) ? [{ name: "bedrijfslogo", type: "company_logo", data_url: companyLogoSrc(company), added_at: now }] : [],
+    customer_id: customer.id,
+    status: "sent",
+    delivery_status: "verzonden",
+    provider: "maintenance_reminder_prepared",
+    created_at: now,
+    updated_at: now,
+  };
+  state.emailMessages.push(message);
+  logEmailAction(message.id, "maintenance_reminder_send", `Onderhoudsherinnering ${triggerLabel} verzonden naar ${customer.email}`);
+  state.customerNotes = state.customerNotes || [];
+  state.customerNotes.push({
+    id: uid("note"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    customer_id: customer.id,
+    created_by: currentUser()?.id || "system",
+    note: `Onderhoudsherinnering verzonden (${triggerLabel}) voor ${status.next ? safeDate(status.next) : "onbekende datum"}.`,
+    source: "maintenance_reminder",
+    follow_up_action: "afspraak maken",
+    created_at: now,
+  });
+  customer.last_maintenance_reminder_sent_at = now;
+  customer.last_maintenance_reminder_status = "verzonden";
+  customer.updated_at = now;
+  return true;
+}
+
+function autoSendMaintenanceReminders() {
+  if (!maintenanceReminderEnabledForCompany()) return;
+  state.emailMessages = state.emailMessages || [];
+  const thresholds = [30, 14, 0, -7];
+  customerScopedRows().filter(customerReminderEnabled).forEach((customer) => {
+    if (!customer.email) return;
+    const status = customerMaintenanceStatus(customer);
+    if (!status.next || status.days === null || !thresholds.includes(status.days)) return;
+    const marker = `${customer.id}|${status.next}|${status.days}`;
+    const alreadySent = (state.emailAuditLogs || []).some((log) => log.details && String(log.details).includes(marker));
+    if (alreadySent) return;
+    if (sendMaintenanceReminderEmail(customer, `${status.days} dagen`)) {
+      const last = (state.emailAuditLogs || [])[state.emailAuditLogs.length - 1];
+      if (last) last.details = `${last.details} | ${marker}`;
+    }
+  });
+  saveState();
+}
+
+function customerSearchText(customer) {
+  const appliances = customerAppliances(customer);
+  return [
+    customer.customer_name,
+    customer.contact_person,
+    customer.address,
+    customer.postal_code,
+    customer.city,
+    customer.phone,
+    customer.email,
+    ...appliances.flatMap((appliance) => [appliance.brand, appliance.model, appliance.serial_number, appliance.category]),
+  ].join(" ").toLowerCase();
+}
+
+function customerFilterValue(key) {
+  ui.customerFilters = ui.customerFilters || {};
+  return String(ui.customerFilters[key] || "");
+}
+
+function setCustomerFilter(key, value) {
+  ui.customerFilters = ui.customerFilters || {};
+  ui.customerFilters[key] = value || "";
+  scheduleRender();
+}
+
+function setCustomerSearch(value) {
+  ui.customerSearch = value || "";
+  scheduleRender();
+}
+
+function filteredCustomerRows() {
+  const search = String(ui.customerSearch || "").trim().toLowerCase();
+  const filters = ui.customerFilters || {};
+  const matches = (value, query) => !query || String(value || "").toLowerCase().includes(String(query || "").toLowerCase());
+  return customerScopedRows()
+    .filter((customer) => !search || customerSearchText(customer).includes(search))
+    .filter((customer) => {
+      const appliances = customerAppliances(customer);
+      const lastVisit = customerLastVisit(customer);
+      const openCount = customerOpenWorkorders(customer).length;
+      const maintenance = customerMaintenanceStatus(customer);
+      const postcodeArea = String(customer.postal_code || "").replace(/\s+/g, "").slice(0, 4);
+      return matches(customer.city, filters.city) &&
+        matches(postcodeArea, filters.postcode) &&
+        (!filters.brand || appliances.some((appliance) => matches(appliance.brand, filters.brand))) &&
+        (!filters.model || appliances.some((appliance) => matches(appliance.model, filters.model))) &&
+        (!filters.category || appliances.some((appliance) => matches(appliance.category, filters.category))) &&
+        matches(lastVisit, filters.last_visit) &&
+        (!filters.open_workorders || (filters.open_workorders === "yes" ? openCount > 0 : openCount === 0)) &&
+        (!filters.maintenance_needed || (filters.maintenance_needed === "yes" ? customerMaintenanceNeeded(customer) : !customerMaintenanceNeeded(customer))) &&
+        (!filters.maintenance_status || maintenance.status === filters.maintenance_status) &&
+        (!filters.reminder_enabled || (filters.reminder_enabled === "yes" ? customerReminderEnabled(customer) : !customerReminderEnabled(customer)));
+    })
+    .sort((a, b) => String(a.customer_name || "").localeCompare(String(b.customer_name || "")));
+}
+
+function customerMapPosition(customer, index) {
+  const lat = Number(customer.lat || customer.latitude);
+  const lng = Number(customer.lng || customer.longitude);
+  if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+    return {
+      left: Math.max(6, Math.min(92, 8 + ((lng - 3.2) / 4.2) * 84)),
+      top: Math.max(8, Math.min(88, 86 - ((lat - 50.6) / 3.0) * 74)),
+    };
+  }
+  const seed = String(`${customer.postal_code || ""}${customer.city || ""}${customer.address || ""}`)
+    .split("")
+    .reduce((sum, char) => sum + char.charCodeAt(0), index * 29);
+  return {
+    left: 8 + (seed * 37) % 84,
+    top: 12 + (seed * 53) % 74,
+  };
+}
+
+function groupedCustomersByRegion(customers) {
+  const groups = new Map();
+  customers.forEach((customer) => {
+    const key = customer.city || String(customer.postal_code || "").slice(0, 4) || "Onbekend";
+    groups.set(key, [...(groups.get(key) || []), customer]);
+  });
+  return [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+}
+
+function openCustomerPopup(customerId) {
+  const customer = byId(state.customers || [], customerId);
+  if (!customer || !isSameCompany(customer)) return;
+  ui.customerPopupId = customerId;
+  render();
+}
+
+function closeCustomerPopup() {
+  ui.customerPopupId = "";
+  render();
+}
+
+function openCustomerDetail(customerId) {
+  const customer = byId(state.customers || [], customerId);
+  if (!customer || !isSameCompany(customer)) return;
+  ui.customerDetailId = customerId;
+  ui.customerPopupId = "";
+  location.hash = "#/admin/customers";
+  render();
+}
+
+function closeCustomerDetail() {
+  ui.customerDetailId = "";
+  render();
+}
+
+function routeToCustomer(customer) {
+  const query = `${customer.address || ""}, ${customer.postal_code || ""} ${customer.city || ""}`.trim();
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+function renderCustomerMap(customers) {
+  const hasLocation = (customer) => isNetherlandsLatLng(customer.lat || customer.latitude, customer.lng || customer.longitude);
+  const withLocation = customers.filter(hasLocation);
+  const missingLocation = customers.filter((customer) => !hasLocation(customer));
+  return `<section class="panel customer-map-panel">
+    <div class="article-head">
+      <div><h2>Kaartweergave Nederland</h2><p>OpenStreetMap met Leaflet, clustering en heatmap. Pins volgen de actieve klant- en toestelfilters.</p></div>
+      <span class="badge">${withLocation.length}/${customers.length} locaties</span>
+    </div>
+    <div id="customer-leaflet-map" class="customer-leaflet-map" aria-label="Nederland kaart met klantlocaties"></div>
+    <div id="customer-map-provider-warning" class="info-box" style="display:none">Kaartprovider niet geladen. Controleer internettoegang voor Leaflet/OpenStreetMap.</div>
+    ${missingLocation.length ? `<div class="customer-map-missing"><strong>Locatie nog niet gevonden</strong>${missingLocation.slice(0, 12).map((customer) => `<span>${escapeHtml(customer.customer_name || "-")} - ${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.house_number || "")}</span>`).join("")}${missingLocation.length > 12 ? `<span>+ ${missingLocation.length - 12} meer</span>` : ""}<button class="btn secondary" type="button" onclick="geocodeCustomerLocationsForMap(customerMapRowsForLeaflet())">Locaties opnieuw ophalen</button></div>` : ""}
+  </section>`;
+}
+
+function customerMapRowsForLeaflet() {
+  return filteredCustomerRows().map((customer) => ({
+    id: customer.id,
+    name: customer.customer_name || "-",
+    address: customer.address || "",
+    house_number: customer.house_number || "",
+    postal_code: customer.postal_code || "",
+    city: customer.city || "",
+    phone: customer.phone || "",
+    email: customer.email || "",
+    lat: Number(customer.lat || customer.latitude),
+    lng: Number(customer.lng || customer.longitude),
+    appliances: customerAppliances(customer).map((item) => ({
+      brand: item.brand || "",
+      model: item.model || "",
+      serial_number: item.serial_number || "",
+      category: item.category || "",
+    })),
+    open_workorders: customerOpenWorkorders(customer).length,
+  }));
+}
+
+function isNetherlandsLatLng(lat, lng) {
+  return Number.isFinite(Number(lat)) &&
+    Number.isFinite(Number(lng)) &&
+    Number(lat) >= 50.6 &&
+    Number(lat) <= 53.8 &&
+    Number(lng) >= 3.0 &&
+    Number(lng) <= 7.4;
+}
+
+function customerHasMapLocation(row) {
+  return isNetherlandsLatLng(row.lat, row.lng);
+}
+
+function customerMapPopupHtml(row) {
+  const applianceLabel = row.appliances.length
+    ? row.appliances.map((item) => `${item.brand || "-"} ${item.model || ""}`).slice(0, 3).join(", ")
+    : "Geen toestellen";
+  return `<div class="leaflet-customer-popup">
+    <strong>${escapeHtml(row.name)}</strong>
+    <span>${escapeHtml(`${row.address || ""} ${row.house_number || ""}`.trim() || "-")}</span>
+    <span>${escapeHtml(`${row.postal_code || ""} ${row.city || ""}`.trim() || "-")}</span>
+    <span>${escapeHtml(applianceLabel)}</span>
+    <button type="button" onclick="openCustomerPopup('${row.id}')">Open klant</button>
+  </div>`;
+}
+
+async function geocodeCustomerLocationsForMap(rows) {
+  if (ui.customerGeocodingBusy) return;
+  const targets = rows
+    .filter((row) => !customerHasMapLocation(row) && row.postal_code && row.house_number)
+    .slice(0, 5);
+  if (!targets.length) return;
+  ui.customerGeocodingBusy = true;
+  let changed = false;
+  for (const row of targets) {
+    try {
+      const query = encodeURIComponent(`${row.postal_code} ${row.house_number}, ${row.city || ""}, Nederland`);
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&countrycodes=nl&limit=1&q=${query}`, { headers: { Accept: "application/json" } });
+      const results = await response.json();
+      const result = results?.[0];
+      const customer = byId(state.customers || [], row.id);
+      if (customer && result?.lat && result?.lon) {
+        customer.lat = Number(result.lat);
+        customer.lng = Number(result.lon);
+        customer.latitude = customer.lat;
+        customer.longitude = customer.lng;
+        customer.geocode_provider = "openstreetmap_nominatim";
+        customer.map_location_saved = true;
+        customer.updated_at = new Date().toISOString();
+        changed = true;
+      }
+    } catch {
+      // Keep missing-location warning visible when provider lookup fails.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  ui.customerGeocodingBusy = false;
+  if (changed) {
+    saveState();
+    setTimeout(initCustomerLeafletMap, 0);
+  }
+}
+
+function initCustomerLeafletMap() {
+  const el = document.getElementById("customer-leaflet-map");
+  if (!el) return;
+  if (!window.L) {
+    const warning = document.getElementById("customer-map-provider-warning");
+    if (warning) warning.style.display = "block";
+    return;
+  }
+  const rows = customerMapRowsForLeaflet();
+  geocodeCustomerLocationsForMap(rows);
+  const located = rows.filter(customerHasMapLocation);
+  if (window.customerLeafletMap) {
+    window.customerLeafletMap.remove();
+    window.customerLeafletMap = null;
+  }
+  el.innerHTML = "";
+  const nlCenter = [52.1326, 5.2913];
+  const nlBounds = window.L.latLngBounds([50.55, 3.0], [53.75, 7.35]);
+  const map = window.L.map(el, {
+    scrollWheelZoom: true,
+    preferCanvas: true,
+    zoomControl: true,
+    maxBounds: nlBounds.pad(0.45),
+    maxBoundsViscosity: 0.65,
+  }).setView(nlCenter, 7);
+  window.customerLeafletMap = map;
+  const tileLayer = window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    minZoom: 6,
+    subdomains: ["a", "b", "c"],
+    crossOrigin: true,
+    attribution: '&copy; OpenStreetMap contributors',
+  });
+  tileLayer.on("tileerror", () => {
+    const warning = document.getElementById("customer-map-provider-warning");
+    if (warning) {
+      warning.style.display = "block";
+      warning.textContent = "Kaarttegels konden niet volledig worden geladen. Controleer de internetverbinding of probeer opnieuw.";
+    }
+  });
+  tileLayer.addTo(map);
+  const markerLayer = window.L.markerClusterGroup ? window.L.markerClusterGroup() : window.L.layerGroup();
+  located.forEach((row) => {
+    const marker = window.L.marker([row.lat, row.lng]).bindPopup(customerMapPopupHtml(row));
+    marker.on("click", () => marker.openPopup());
+    markerLayer.addLayer(marker);
+  });
+  markerLayer.addTo(map);
+  if (located.length && window.L.heatLayer) {
+    window.L.heatLayer(located.map((row) => [row.lat, row.lng, Math.max(1, row.open_workorders + row.appliances.length)]), {
+      radius: 34,
+      blur: 24,
+      maxZoom: 11,
+      gradient: { 0.25: "#3b82f6", 0.55: "#e0a13a", 1: "#ef4444" },
+    }).addTo(map);
+  } else {
+    located.forEach((row) => window.L.circle([row.lat, row.lng], {
+      radius: 3500,
+      color: "#e0a13a",
+      fillColor: "#e0a13a",
+      fillOpacity: 0.12,
+      weight: 1,
+    }).addTo(map));
+  }
+  map.setView(nlCenter, 7);
+  [0, 80, 250, 600].forEach((delay) => setTimeout(() => {
+    if (!window.customerLeafletMap || window.customerLeafletMap !== map) return;
+    map.invalidateSize({ animate: false });
+    map.setView(nlCenter, 7, { animate: false });
+  }, delay));
+}
+
+function renderCustomerCard(customer) {
+  const workorders = customerWorkorders(customer);
+  const appliances = customerAppliances(customer);
+  const openCount = customerOpenWorkorders(customer).length;
+  const lastVisit = customerLastVisit(customer);
+  const maintenance = customerMaintenanceStatus(customer);
+  const reminderEnabled = customerReminderEnabled(customer);
+  return `<article class="customer-card">
+    <div class="customer-card-main">
+      <div>
+        <h3>${escapeHtml(customer.customer_name || "-")}</h3>
+        <p>${escapeHtml(customer.address || "-")} ${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.city || "")}</p>
+      </div>
+      <span class="badge ${openCount ? "warn" : "ok"}">${openCount ? `${openCount} open` : "Geen open werkbonnen"}</span>
+    </div>
+    <div class="customer-card-grid">
+      <div><span>Plaats</span><strong>${escapeHtml(customer.city || "-")}</strong></div>
+      <div><span>Telefoon</span><strong>${escapeHtml(customer.phone || "-")}</strong></div>
+      <div><span>E-mail</span><strong>${escapeHtml(customer.email || "-")}</strong></div>
+      <div><span>Werkbonnen</span><strong>${workorders.length}</strong></div>
+      <div><span>Laatste bezoek</span><strong>${lastVisit ? safeDate(lastVisit) : "-"}</strong></div>
+      <div><span>Toestellen</span><strong>${appliances.length ? appliances.map((item) => `${item.brand || "-"} ${item.model || ""}`).slice(0, 2).join(", ") : "-"}</strong></div>
+    </div>
+    <section class="maintenance-reminder-strip">
+      <div>
+        <strong>Onderhoudsherinneringen</strong>
+        <span>Laatste onderhoud: ${customerLastMaintenanceDate(customer) ? safeDate(customerLastMaintenanceDate(customer)) : "-"} · Interval: ${customerMaintenanceInterval(customer)} maanden · Volgende: ${maintenance.next ? safeDate(maintenance.next) : "-"} · Status: ${maintenance.status}</span>
+      </div>
+      <label>Aan / Uit
+        <select onchange="updateCustomer('${customer.id}', 'maintenance_reminder_enabled', this.value === 'true')" ${!maintenanceReminderEnabledForCompany() ? "disabled" : ""}>
+          <option value="false" ${!reminderEnabled ? "selected" : ""}>Uit</option>
+          <option value="true" ${reminderEnabled ? "selected" : ""}>Aan</option>
+        </select>
+      </label>
+    </section>
+    <div class="button-row">
+      <button class="btn secondary" type="button" onclick="openCustomerPopup('${customer.id}')">Details</button>
+      <button class="btn secondary" type="button" onclick="openCustomerDetail('${customer.id}')">Open klant</button>
+      <a class="btn secondary" target="_blank" href="${escapeAttr(routeToCustomer(customer))}">Route</a>
+      ${reminderEnabled && maintenanceReminderEnabledForCompany() ? `<button class="btn secondary" type="button" onclick="sendMaintenanceReminderNow('${customer.id}')">Herinnering sturen</button>` : ""}
+      <button class="btn secondary" type="button" onclick="openCustomerEdit('${customer.id}')">Bewerken</button>
+    </div>
+  </article>`;
+}
+
+function renderCustomerPopup() {
+  const customer = ui.customerPopupId ? byId(state.customers || [], ui.customerPopupId) : null;
+  if (!customer || !isSameCompany(customer)) return "";
+  const appliances = customerAppliances(customer);
+  const workorders = customerWorkorders(customer).sort((a, b) => String(b.completedAt || b.date || "").localeCompare(String(a.completedAt || a.date || "")));
+  const open = workorders.filter((project) => !isProjectCompleted(project));
+  const maintenance = customerMaintenanceStatus(customer);
+  return `<section class="modal-backdrop"><div class="panel confirm-modal customer-popup">
+    <div class="article-head"><div><h2>${escapeHtml(customer.customer_name || "-")}</h2><p>${escapeHtml(customer.address || "-")} ${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.city || "")}</p></div><button class="btn secondary" type="button" onclick="closeCustomerPopup()">Sluiten</button></div>
+    <div class="meta-grid">
+      <div class="meta"><span>Telefoon</span><strong>${escapeHtml(customer.phone || "-")}</strong></div>
+      <div class="meta"><span>E-mail</span><strong>${escapeHtml(customer.email || "-")}</strong></div>
+      <div class="meta"><span>Laatste werkbon</span><strong>${workorders[0] ? escapeHtml(workorderNumber(workorders[0])) : "-"}</strong></div>
+      <div class="meta"><span>Openstaand</span><strong>${open.length}</strong></div>
+      <div class="meta"><span>Onderhoud</span><strong>${escapeHtml(maintenance.status)}</strong></div>
+      <div class="meta"><span>Volgende onderhoudsdatum</span><strong>${maintenance.next ? safeDate(maintenance.next) : "-"}</strong></div>
+    </div>
+    <h3>Aanwezige toestellen</h3>
+    ${appliances.length ? appliances.map((item) => {
+      const typeplateSrc = item.typeplate_photo?.data_url || storageDataUrl(item.typeplate_photo?.storage_file_id);
+      return `<p><strong>${escapeHtml(item.brand || "-")} ${escapeHtml(item.model || "")}</strong><br>${escapeHtml(item.serial_number || "Geen serienummer")} - ${escapeHtml(item.category || "-")} ${item.build_year ? `- bouwjaar ${escapeHtml(item.build_year)}` : ""}<br>Laatste onderhoud: ${item.last_service_date ? safeDate(item.last_service_date) : "-"} ${item.next_service_date ? `- Volgend: ${safeDate(item.next_service_date)}` : ""}</p>${typeplateSrc ? `<div class="photo-row"><img src="${escapeAttr(typeplateSrc)}" alt="Foto typeplaatje" /><span>${escapeHtml(item.typeplate_photo.file_name || "typeplaatje")}</span></div>` : ""}`;
+    }).join("") : `<p class="muted">Geen toestellen geregistreerd.</p>`}
+    <h3>Onderhoudshistorie</h3>
+    ${workorders.length ? workorders.slice(0, 5).map((project) => `<p>${safeDate(project.completedAt || project.date || project.createdAt)} - ${escapeHtml(workorderNumber(project))} - ${escapeHtml(project.status || "-")}</p>`).join("") : `<p class="muted">Geen werkbonhistorie.</p>`}
+    <div class="button-row">
+      <button class="btn success" type="button" onclick="openCustomerDetail('${customer.id}')">Open klant</button>
+      <a class="btn secondary" href="#/new">Nieuwe werkbon</a>
+      <a class="btn secondary" target="_blank" href="${escapeAttr(routeToCustomer(customer))}">Route</a>
+    </div>
+  </div></section>`;
+}
+
+function renderCustomerDetailPage(customer) {
+  const appliances = customerAppliances(customer);
+  const workorders = customerWorkorders(customer).sort((a, b) => String(b.completedAt || b.date || "").localeCompare(String(a.completedAt || a.date || "")));
+  const quotes = customerQuotes(customer);
+  const invoices = customerInvoices(customer);
+  const notes = companyScoped(state.customerNotes || []).filter((note) => note.customer_id === customer.id);
+  const photos = workorders.flatMap((project) => storedWorkOrderPhotos(project).map((photo) => ({ ...photo, project })));
+  const maintenance = customerMaintenanceStatus(customer);
+  return `<section class="office-page-head">
+    <div><h2>${escapeHtml(customer.customer_name || "-")}</h2><p>Klantdossier met adressen, toestellen, werkbonnen, facturen, offertes, foto's en notities.</p></div>
+    <div class="button-row"><button class="btn secondary" type="button" onclick="closeCustomerDetail()">Terug naar klanten</button><button class="btn secondary" type="button" onclick="openCustomerEdit('${customer.id}')">Bewerken</button></div>
+  </section>
+  <section class="stats office-kpis">
+    <div class="stat-card"><span>Werkbonnen</span><strong>${workorders.length}</strong></div>
+    <div class="stat-card"><span>Toestellen</span><strong>${appliances.length}</strong></div>
+    <div class="stat-card"><span>Offertes</span><strong>${quotes.length}</strong></div>
+    <div class="stat-card"><span>Facturen/betalingen</span><strong>${invoices.length}</strong></div>
+  </section>
+  <section class="customer-detail-grid">
+    <section class="panel"><h2>Klantgegevens</h2><div class="meta-grid"><div class="meta"><span>Adres</span><strong>${escapeHtml(customer.address || "-")}</strong></div><div class="meta"><span>Postcode</span><strong>${escapeHtml(customer.postal_code || "-")}</strong></div><div class="meta"><span>Plaats</span><strong>${escapeHtml(customer.city || "-")}</strong></div><div class="meta"><span>Telefoon</span><strong>${escapeHtml(customer.phone || "-")}</strong></div><div class="meta"><span>E-mail</span><strong>${escapeHtml(customer.email || "-")}</strong></div></div></section>
+    <section class="panel"><h2>Adressen</h2><p>${escapeHtml(customer.address || "-")}<br>${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.city || "")}</p><a class="btn secondary" target="_blank" href="${escapeAttr(routeToCustomer(customer))}">Route</a></section>
+  </section>
+  <section class="panel"><h2>Onderhoudsplanning</h2><div class="meta-grid"><div class="meta"><span>Laatste onderhoud</span><strong>${customerLastMaintenanceDate(customer) ? safeDate(customerLastMaintenanceDate(customer)) : "-"}</strong></div><div class="meta"><span>Interval</span><strong>${customerMaintenanceInterval(customer)} maanden</strong></div><div class="meta"><span>Volgende onderhoud</span><strong>${maintenance.next ? safeDate(maintenance.next) : "-"}</strong></div><div class="meta"><span>Status</span><strong>${escapeHtml(maintenance.status)}</strong></div><div class="meta"><span>E-mailherinnering</span><strong>${customerReminderEnabled(customer) ? "Ja" : "Nee"}</strong></div></div><div class="form-grid" style="margin-top:12px"><label>Onderhoudsinterval maanden <input type="number" min="1" value="${customerMaintenanceInterval(customer)}" onchange="updateCustomer('${customer.id}', 'maintenance_interval_months', this.value)" /></label><label>Volgende onderhoudsdatum <input type="date" value="${escapeAttr(maintenance.next || "")}" onchange="updateCustomer('${customer.id}', 'next_maintenance_date', this.value)" /></label><label>Herinneringen <select onchange="updateCustomer('${customer.id}', 'maintenance_reminder_enabled', this.value === 'true')"><option value="false" ${!customerReminderEnabled(customer) ? "selected" : ""}>Uit</option><option value="true" ${customerReminderEnabled(customer) ? "selected" : ""}>Aan</option></select></label></div></section>
+  <section class="panel"><h2>Toestellen</h2>${appliances.length ? `<div class="table-wrap"><table><thead><tr><th>Merk</th><th>Type</th><th>Serienummer</th><th>Bouwjaar</th><th>Categorie</th><th>Laatste service</th><th>Volgend onderhoud</th><th>Foto</th></tr></thead><tbody>${appliances.map((item) => `<tr><td>${escapeHtml(item.brand || "-")}</td><td>${escapeHtml(item.model || "-")}</td><td>${escapeHtml(item.serial_number || "-")}</td><td>${escapeHtml(item.build_year || "-")}</td><td>${escapeHtml(item.category || "-")}</td><td>${safeDate(item.last_service_date || item.service_date)}</td><td>${item.next_service_date ? safeDate(item.next_service_date) : "-"}</td><td>${item.typeplate_photo?.data_url || item.typeplate_photo?.storage_file_id ? "Ja" : "Nee"}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Geen toestellen geregistreerd.</p>`}</section>
+  ${renderCustomerCommunication(customer)}
+  <section class="panel"><h2>Werkbonhistorie</h2>${workorders.length ? `<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Werkbon</th><th>Status</th><th>Monteur</th><th>Actie</th></tr></thead><tbody>${workorders.map((project) => `<tr><td>${safeDate(project.completedAt || project.date || project.createdAt)}</td><td>${escapeHtml(workorderNumber(project))}</td><td>${escapeHtml(project.status || "-")}</td><td>${escapeHtml(mechanicNameById(project.assignedMechanicId || project.mechanicId) || project.technician || "-")}</td><td>${canOpenWorkorder(project) ? `<a class="btn secondary" href="#/project/${project.id}">Open werkbon</a>` : "-"}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Geen werkbonnen.</p>`}</section>
+  <section class="customer-detail-grid">
+    <section class="panel"><h2>Facturen</h2>${invoices.length ? invoices.map((invoice) => `<p>${escapeHtml(invoice.invoice_number || invoice.id)} - ${euro(invoice.amount || invoice.total_inc_vat || 0)} - ${escapeHtml(invoice.status || "-")}</p>`).join("") : `<p class="muted">Geen facturen.</p>`}</section>
+    <section class="panel"><h2>Offertes</h2>${quotes.length ? quotes.map((quote) => `<p>${escapeHtml(quote.quote_number || quote.id)} - ${euro(quote.total_inc_vat || 0)} - ${escapeHtml(quote.status || "-")}</p>`).join("") : `<p class="muted">Geen offertes.</p>`}</section>
+  </section>
+  <section class="panel"><h2>Foto's/documenten</h2>${photos.length ? `<div class="photo-grid">${photos.slice(0, 12).map((photo) => `<div class="photo-thumb"><img src="${escapeAttr(photoSrc(photo))}" alt="${escapeAttr(photo.file_name || "foto")}" /><span>${escapeHtml(photo.file_name || photo.category || "foto")}</span><small>${escapeHtml(workorderNumber(photo.project))}</small></div>`).join("")}</div>` : `<p class="muted">Geen foto's of documenten.</p>`}</section>
+  <section class="panel"><h2>Notities</h2>${notes.length ? notes.map((note) => `<p>${safeDate(note.created_at)} - ${escapeHtml(note.note || "")}</p>`).join("") : `<p class="muted">${escapeHtml(customer.notes || "Geen notities.")}</p>`}</section>
+  ${ui.editingCustomerId ? renderCustomerModal(ui.editingCustomerId) : ""}`;
+}
+
+function renderCustomers() {
+  if (!isCompanyModuleActive("customers")) return moduleInactiveMessage();
+  autoSendMaintenanceReminders();
+  const detailCustomer = ui.customerDetailId ? byId(state.customers || [], ui.customerDetailId) : null;
+  if (detailCustomer && isSameCompany(detailCustomer)) return renderCustomerDetailPage(detailCustomer);
+  const rows = filteredCustomerRows();
+  const all = customerScopedRows();
+  return `<section class="customers-page">
+    <section class="office-page-head">
+      <div><h2>Klanten</h2><p>Zoeken, filteren, kaartweergave en klantdossiers binnen ${escapeHtml(currentCompany()?.name || "het bedrijf")}.</p></div>
+      <button class="btn success" type="button" onclick="openCustomerEdit('new')">Klant toevoegen</button>
+    </section>
+    <section class="panel customer-search-panel">
+      <label>Zoeken
+        <input value="${escapeAttr(ui.customerSearch || "")}" placeholder="Klantnaam, adres, plaats, postcode, telefoon, e-mail of serienummer toestel" oninput="setCustomerSearch(this.value)" />
+      </label>
+      <div class="form-grid">
+        <label>Plaats <input value="${escapeAttr(customerFilterValue("city"))}" oninput="setCustomerFilter('city', this.value)" /></label>
+        <label>Postcodegebied <input value="${escapeAttr(customerFilterValue("postcode"))}" placeholder="Bijv. 3011" oninput="setCustomerFilter('postcode', this.value)" /></label>
+        <label>Merk toestel <input value="${escapeAttr(customerFilterValue("brand"))}" oninput="setCustomerFilter('brand', this.value)" /></label>
+        <label>Type toestel <input value="${escapeAttr(customerFilterValue("model"))}" oninput="setCustomerFilter('model', this.value)" /></label>
+        <label>Toestelcategorie <input value="${escapeAttr(customerFilterValue("category"))}" oninput="setCustomerFilter('category', this.value)" /></label>
+        <label>Laatste bezoekdatum <input value="${escapeAttr(customerFilterValue("last_visit"))}" placeholder="2026-05" oninput="setCustomerFilter('last_visit', this.value)" /></label>
+        <label>Openstaande werkbonnen <select onchange="setCustomerFilter('open_workorders', this.value)"><option value="">Alle</option><option value="yes" ${customerFilterValue("open_workorders") === "yes" ? "selected" : ""}>Ja</option><option value="no" ${customerFilterValue("open_workorders") === "no" ? "selected" : ""}>Nee</option></select></label>
+        <label>Onderhoud nodig <select onchange="setCustomerFilter('maintenance_needed', this.value)"><option value="">Alle</option><option value="yes" ${customerFilterValue("maintenance_needed") === "yes" ? "selected" : ""}>Ja</option><option value="no" ${customerFilterValue("maintenance_needed") === "no" ? "selected" : ""}>Nee</option></select></label>
+        <label>Onderhoudsstatus <select onchange="setCustomerFilter('maintenance_status', this.value)"><option value="">Alle</option>${["Niet nodig", "Binnenkort nodig", "Te laat"].map((status) => `<option value="${status}" ${customerFilterValue("maintenance_status") === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
+        <label>Herinnering <select onchange="setCustomerFilter('reminder_enabled', this.value)"><option value="">Alle</option><option value="yes" ${customerFilterValue("reminder_enabled") === "yes" ? "selected" : ""}>Aan</option><option value="no" ${customerFilterValue("reminder_enabled") === "no" ? "selected" : ""}>Uit</option></select></label>
+      </div>
+    </section>
+    <section class="panel maintenance-reminder-company">
+      <div class="article-head">
+        <div><h2>Onderhoudsherinneringen</h2><p>Automatische e-mail op 30 dagen, 14 dagen, de onderhoudsdatum en 7 dagen na verlopen datum.</p></div>
+        <label>Aan / Uit <select onchange="updateCompanySetting('maintenance_reminders_enabled', this.value === 'true')" ${!isCompanyModuleActive("maintenance_contracts") ? "disabled" : ""}><option value="false" ${!maintenanceReminderEnabledForCompany() ? "selected" : ""}>Uit</option><option value="true" ${maintenanceReminderEnabledForCompany() ? "selected" : ""}>Aan</option></select></label>
+      </div>
+      ${!isCompanyModuleActive("maintenance_contracts") ? `<p class="muted">Module Onderhoudscontracten is niet actief binnen dit abonnement.</p>` : `<p class="muted">Company Admin beheert dit per bedrijf. Verzonden herinneringen komen in klantnotities en e-mail auditlog.</p>`}
+    </section>
+    ${renderCustomerMap(rows)}
+    <section class="stats office-kpis">
+      <div class="stat-card"><span>Klanten gevonden</span><strong>${rows.length}/${all.length}</strong></div>
+      <div class="stat-card"><span>Open werkbonnen</span><strong>${rows.reduce((sum, customer) => sum + customerOpenWorkorders(customer).length, 0)}</strong></div>
+      <div class="stat-card"><span>Toestellen</span><strong>${rows.reduce((sum, customer) => sum + customerAppliances(customer).length, 0)}</strong></div>
+      <div class="stat-card"><span>Onderhoud nodig</span><strong>${rows.filter(customerMaintenanceNeeded).length}</strong></div>
+    </section>
+    <section class="customers-list">
+      ${rows.length ? rows.map(renderCustomerCard).join("") : `<section class="panel empty">Geen klanten gevonden.</section>`}
+    </section>
+    ${ui.editingCustomerId ? renderCustomerModal(ui.editingCustomerId) : ""}
+    ${renderCustomerPopup()}
+  </section>`;
+}
+
+function sendMaintenanceReminderNow(customerId) {
+  const customer = byId(state.customers || [], customerId);
+  if (!customer || !isSameCompany(customer)) return;
+  if (!customer.email) return alert("Geen e-mailadres bekend voor deze klant.");
+  if (!maintenanceReminderEnabledForCompany()) return alert("Onderhoudsherinneringen zijn niet actief voor dit bedrijf.");
+  sendMaintenanceReminderEmail(customer, "handmatig");
+  saveState();
+  alert(`Onderhoudsherinnering verzonden naar ${customer.email}.`);
+  render();
+}
+
+function platformModulesCompanySearch() {
+  return String(ui.platformModulesCompanySearch || "").trim().toLowerCase();
+}
+
+function setPlatformModulesCompanySearch(value) {
+  ui.platformModulesCompanySearch = value || "";
+  scheduleRender();
+}
+
+function setPlatformModulesPackageFilter(value) {
+  ui.platformModulesPackageFilter = value || "ALL";
+  scheduleRender();
+}
+
+function setPlatformModulesStatusFilter(value) {
+  ui.platformModulesStatusFilter = value || "ALL";
+  scheduleRender();
+}
+
+function platformModulesOpenCompanies() {
+  ui.platformModulesOpenCompanies = ui.platformModulesOpenCompanies || {};
+  return ui.platformModulesOpenCompanies;
+}
+
+function togglePlatformModulesCompany(companyId) {
+  const open = platformModulesOpenCompanies();
+  open[companyId] = !open[companyId];
+  render();
+}
+
+function setAllPlatformModulesCompaniesOpen(openAll) {
+  const open = platformModulesOpenCompanies();
+  platformCompanies().forEach((company) => {
+    open[company.id] = Boolean(openAll);
+  });
+  render();
+}
+
+function platformModuleDrafts() {
+  ui.platformModuleDrafts = ui.platformModuleDrafts || {};
+  return ui.platformModuleDrafts;
+}
+
+function platformModuleDraft(company) {
+  ensureCompanyModulesEnabled(company);
+  const drafts = platformModuleDrafts();
+  drafts[company.id] = drafts[company.id] || {};
+  moduleCatalog().forEach((module) => {
+    if (typeof drafts[company.id][module.key] !== "boolean") {
+      drafts[company.id][module.key] = company.modules_enabled?.[module.key] === true;
+    }
+  });
+  return drafts[company.id];
+}
+
+function setPlatformModuleDraft(companyId, moduleKey, value) {
+  const company = byId(state.companies || [], companyId);
+  if (!company || !isPlatformSuperAdmin()) return;
+  const key = normalizeModuleKey(moduleKey);
+  const draft = platformModuleDraft(company);
+  draft[key] = Boolean(value);
+  render();
+}
+
+function platformModuleActiveCount(company) {
+  const draft = platformModuleDraft(company);
+  return moduleCatalog().filter((module) => draft[module.key] === true).length;
+}
+
+function platformModulesPackageFilter() {
+  return ui.platformModulesPackageFilter || "ALL";
+}
+
+function platformModulesStatusFilter() {
+  return ui.platformModulesStatusFilter || "ALL";
+}
+
+function platformModuleMatchesFilters(company, module) {
+  const draft = platformModuleDraft(company);
+  const packageFilter = platformModulesPackageFilter();
+  const statusFilter = platformModulesStatusFilter();
+  if (packageFilter !== "ALL" && module.pkg !== packageFilter) return false;
+  if (statusFilter === "active" && draft[module.key] !== true) return false;
+  if (statusFilter === "inactive" && draft[module.key] === true) return false;
+  return true;
+}
+
+function platformCompanyMatchesModuleFilters(company) {
+  if (platformModulesPackageFilter() === "ALL" && platformModulesStatusFilter() === "ALL") return true;
+  return moduleCatalog().some((module) => platformModuleMatchesFilters(company, module));
+}
+
+function modulePermissionSummary(module) {
+  const rights = {
+    customers: "Company Admin, klantrechten",
+    planning: "Company Admin, planningrechten",
+    workorders: "Company Admin, werkbonrechten",
+    quotes: "Offerte rechten",
+    invoices: "Factuur rechten",
+    email: "E-mailrechten",
+    photo_storage: "Werkbon/fotorechten",
+    reports: "Rapportagerechten",
+    inventory: "Voorraad beheren",
+    warehouse: "Voorraad beheren",
+    van_stock: "Busvoorraad beheren",
+    kits: "Voorraad beheren",
+    ordering: "Bestelrechten",
+    wasco: "Bestelrechten + Wasco beheer",
+    maintenance_contracts: "Onderhoudscontracten beheren",
+    profit_dashboard: "Alleen Company Admin",
+    whatsapp: "WhatsApp rechten",
+    api_access: "API beheer",
+    accounting: "Boekhoudbeheer",
+  };
+  return rights[module.key] || "Module rechten per gebruiker/rol";
+}
+
+function saveCompanyModules(companyId) {
+  const company = byId(state.companies || [], companyId);
+  if (!company || !isPlatformSuperAdmin()) return;
+  const draft = platformModuleDraft(company);
+  ensureCompanyModulesEnabled(company);
+  const changed = [];
+  moduleCatalog().forEach((module) => {
+    const next = draft[module.key] === true;
+    const previous = company.modules_enabled[module.key] === true;
+    company.modules_enabled[module.key] = next;
+    company.module_meta[module.key] = {
+      ...(company.module_meta[module.key] || {}),
+      package: module.pkg,
+      description: module.description,
+      dependencies: module.dependencies,
+      last_changed_at: next !== previous ? new Date().toISOString() : company.module_meta[module.key]?.last_changed_at || company.updated_at || "",
+      last_changed_by: currentUser()?.id || "",
+    };
+    if (next !== previous) changed.push(`${module.label}: ${next ? "aan" : "uit"}`);
+  });
+  ensureCompanyPlatformConfig(company);
+  company.updated_at = new Date().toISOString();
+  logPlatformAction("modules opgeslagen", company.id, changed.length ? changed.join(", ") : "Geen wijzigingen");
+  saveState();
+  render();
+}
+
+function renderPlatformModuleCheckbox(company, module) {
+  const draft = platformModuleDraft(company);
+  const active = draft[module.key] === true;
+  const missing = active ? module.dependencies.filter((dependency) => draft[dependency] !== true) : [];
+  const meta = company.module_meta?.[module.key] || {};
+  const lastChanged = meta.last_changed_at ? String(meta.last_changed_at).replace("T", " ").slice(0, 16) : "-";
+  const dependencyLabels = module.dependencies.map((dependency) => moduleCatalog().find((item) => item.key === dependency)?.label || dependency);
+  return `<label class="module-check-card ${active ? "active" : ""}">
+    <input type="checkbox" ${active ? "checked" : ""} onchange="setPlatformModuleDraft('${company.id}', '${module.key}', this.checked)" />
+    <span>
+      <strong>${escapeHtml(module.label)}</strong>
+      <small>${escapeHtml(module.description || "")}</small>
+      <span class="module-detail-list">
+        <em>Pakketniveau: ${escapeHtml(module.pkg)}</em>
+        <em>Status: ${active ? "Actief" : "Niet actief"}</em>
+        <em>Rechten: ${escapeHtml(modulePermissionSummary(module))}</em>
+        <em>Afhankelijkheden: ${dependencyLabels.length ? escapeHtml(dependencyLabels.join(", ")) : "Geen"}</em>
+        <em>Laatst gewijzigd: ${escapeHtml(lastChanged)}</em>
+        <em>Prijsimpact later: voorbereid</em>
+      </span>
+      ${missing.length ? `<em class="warning-text">Afhankelijkheid mist: ${escapeHtml(missing.map((dependency) => moduleCatalog().find((item) => item.key === dependency)?.label || dependency).join(", "))}</em>` : ""}
+    </span>
+  </label>`;
+}
+
+function renderPlatformModulesCompany(company) {
+  const isOpen = platformModulesOpenCompanies()[company.id] === true;
+  const activeCount = platformModuleActiveCount(company);
+  const modules = moduleCatalog();
+  const visibleModules = modules.filter((module) => platformModuleMatchesFilters(company, module));
+  const basis = visibleModules.filter((module) => module.pkg === "Basis");
+  const extensions = visibleModules.filter((module) => module.pkg !== "Basis");
+  const status = company.active === false ? "Inactief" : company.blocked ? "Geblokkeerd" : "Actief";
+  return `<article class="rights-company-card module-company-card ${isOpen ? "open" : ""}">
+    <button class="rights-company-toggle" type="button" onclick="togglePlatformModulesCompany('${company.id}')">
+      <span class="rights-caret">${isOpen ? "▾" : "▸"}</span>
+      <span class="rights-company-name">${escapeHtml(company.name || "-")}</span>
+      <span class="muted">${escapeHtml(status)} | ${escapeHtml(company.subscription_package || "Basis")} pakket | ${activeCount} actieve modules</span>
+    </button>
+    ${isOpen ? `<div class="module-company-body">
+      <section class="module-group">
+        <h3>Basis modules</h3>
+        ${basis.length ? `<div class="module-check-grid">${basis.map((module) => renderPlatformModuleCheckbox(company, module)).join("")}</div>` : `<p class="muted">Geen basismodules binnen de huidige filters.</p>`}
+      </section>
+      <section class="module-group">
+        <h3>Uitbreidingsmodules</h3>
+        ${extensions.length ? `<div class="module-check-grid">${extensions.map((module) => renderPlatformModuleCheckbox(company, module)).join("")}</div>` : `<p class="muted">Geen uitbreidingsmodules binnen de huidige filters.</p>`}
+      </section>
+      <div class="button-row">
+        <button class="btn success" type="button" onclick="saveCompanyModules('${company.id}')">Modules opslaan</button>
+      </div>
+    </div>` : ""}
+  </article>`;
+}
+
+function renderPlatformModules() {
+  if (!isPlatformSuperAdmin()) return renderPlatformAccessDenied();
+  const search = platformModulesCompanySearch();
+  const companies = platformCompanies()
+    .filter((company) => !search || String(company.name || "").toLowerCase().includes(search))
+    .filter(platformCompanyMatchesModuleFilters)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  return `<section class="platform-rights-page platform-modules-page">
+    <section class="panel rights-intro">
+      <div class="article-head">
+        <div>
+          <h2>Modules</h2>
+          <p>Bedrijven zijn standaard ingeklapt. Open alleen het bedrijf waarvoor u modules wilt beheren.</p>
+        </div>
+        <span class="badge">${companies.length} bedrijven</span>
+      </div>
+      <div class="form-grid">
+        <label>Zoek bedrijf
+          <input value="${escapeAttr(ui.platformModulesCompanySearch || "")}" placeholder="Zoek bedrijf..." oninput="setPlatformModulesCompanySearch(this.value)" />
+        </label>
+        <label>Filter op pakket
+          <select onchange="setPlatformModulesPackageFilter(this.value)">
+            <option value="ALL" ${platformModulesPackageFilter() === "ALL" ? "selected" : ""}>Alle pakketten</option>
+            ${["Basis", "Professional", "Premium"].map((pkg) => `<option value="${pkg}" ${platformModulesPackageFilter() === pkg ? "selected" : ""}>${pkg}</option>`).join("")}
+          </select>
+        </label>
+        <label>Filter op modules
+          <select onchange="setPlatformModulesStatusFilter(this.value)">
+            <option value="ALL" ${platformModulesStatusFilter() === "ALL" ? "selected" : ""}>Actief en inactief</option>
+            <option value="active" ${platformModulesStatusFilter() === "active" ? "selected" : ""}>Alleen actieve modules</option>
+            <option value="inactive" ${platformModulesStatusFilter() === "inactive" ? "selected" : ""}>Alleen inactieve modules</option>
+          </select>
+        </label>
+      </div>
+      <div class="button-row" style="margin-top:14px">
+        <button class="btn secondary" type="button" onclick="setAllPlatformModulesCompaniesOpen(true)">Alles uitklappen</button>
+        <button class="btn ghost" type="button" onclick="setAllPlatformModulesCompaniesOpen(false)">Alles inklappen</button>
+      </div>
+    </section>
+    <section class="rights-company-list">
+      ${companies.length ? companies.map(renderPlatformModulesCompany).join("") : `<section class="panel empty">Geen bedrijven gevonden.</section>`}
+    </section>
+  </section>`;
+}
+
+function platformBillingCompanySearch() {
+  return String(ui.platformBillingCompanySearch || "").trim().toLowerCase();
+}
+
+function setPlatformBillingCompanySearch(value) {
+  ui.platformBillingCompanySearch = value || "";
+  scheduleRender();
+}
+
+function platformBillingOpenCompanies() {
+  ui.platformBillingOpenCompanies = ui.platformBillingOpenCompanies || {};
+  return ui.platformBillingOpenCompanies;
+}
+
+function togglePlatformBillingCompany(companyId) {
+  const open = platformBillingOpenCompanies();
+  open[companyId] = !open[companyId];
+  render();
+}
+
+function subscriptionPlanAmount(company) {
+  const explicit = Number(company.monthly_price ?? company.subscription_price ?? company.price_amount ?? 0);
+  if (explicit > 0) return explicit;
+  const plan = String(company.price_plan || company.subscription_package || "basis").toLowerCase();
+  if (plan.includes("premium")) return 149;
+  if (plan.includes("professional")) return 99;
+  return 49;
+}
+
+function addMonthsIso(date, months) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next.toISOString();
+}
+
+function firstDayNextMonthIso(base = new Date()) {
+  return new Date(base.getFullYear(), base.getMonth() + 1, 1).toISOString();
+}
+
+function daysBetweenToday(dateValue) {
+  if (!dateValue) return 0;
+  const target = new Date(dateValue);
+  if (Number.isNaN(target.getTime())) return 0;
+  const today = new Date();
+  target.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  return Math.floor((today - target) / 86400000);
+}
+
+function platformBillingHistory(company) {
+  const external = [
+    ...(state.platformBillingInvoices || []),
+    ...(state.billingInvoices || []),
+    ...(state.saasInvoices || []),
+  ].filter((invoice) => strictRecordCompanyId(invoice) === company.id || invoice.company_id === company.id || invoice.companyId === company.id);
+  const own = company.billing_history || company.billingHistory || company.invoices || company.billing_invoices || [];
+  const rows = [...own, ...external].map((invoice, index) => ({
+    id: invoice.id || invoice.invoice_number || invoice.number || `${company.id}-invoice-${index}`,
+    invoice_number: invoice.invoice_number || invoice.number || invoice.invoiceNumber || `#${new Date().getFullYear()}-${String(index + 1).padStart(3, "0")}`,
+    amount: Number(invoice.amount ?? invoice.total ?? invoice.total_inc_vat ?? invoice.open_amount ?? subscriptionPlanAmount(company)),
+    status: invoice.status || invoice.payment_status || invoice.billing_status || "openstaand",
+    invoice_date: invoice.invoice_date || invoice.created_at || invoice.createdAt || "",
+    paid_at: invoice.paid_at || invoice.paidAt || "",
+    due_date: invoice.due_date || invoice.dueDate || "",
+  }));
+  if (rows.length) return rows.sort((a, b) => String(b.invoice_date || b.due_date || "").localeCompare(String(a.invoice_date || a.due_date || "")));
+  const amount = subscriptionPlanAmount(company);
+  const nextDate = company.next_invoice_date || firstDayNextMonthIso();
+  const previousDate = addMonthsIso(nextDate, -1);
+  const status = billingStatusInfo(company).statusKey === "paid" ? "betaald" : "openstaand";
+  return [{
+    id: `${company.id}-current-invoice`,
+    invoice_number: `#${new Date(previousDate).getFullYear()}-${String(new Date(previousDate).getMonth() + 1).padStart(3, "0")}`,
+    amount,
+    status,
+    invoice_date: previousDate,
+    paid_at: status === "betaald" ? (company.last_paid_at || company.last_payment_date || previousDate) : "",
+    due_date: previousDate,
+  }];
+}
+
+function billingStatusInfo(company) {
+  const raw = String(company.billing_status || company.subscription_status || "").toLowerCase();
+  const outstanding = Number(company.outstanding_amount ?? company.open_amount ?? company.amount_due ?? 0);
+  const daysLate = Number(company.days_overdue ?? company.days_late ?? Math.max(0, daysBetweenToday(company.payment_due_date || company.due_date || "")));
+  if (company.blocked || raw === "paused" || raw === "cancelled") return { label: "Gepauzeerd", statusKey: "paused", className: "paused" };
+  if (raw === "overdue" || raw === "achterstand" || daysLate > 0) return { label: "Achterstand", statusKey: "overdue", className: "overdue" };
+  if (raw === "open" || raw === "unpaid" || raw === "openstaand" || outstanding > 0) return { label: "Openstaand", statusKey: "open", className: "open" };
+  return { label: "Betaald", statusKey: "paid", className: "paid" };
+}
+
+function platformBillingSummary(company) {
+  const status = billingStatusInfo(company);
+  const planAmount = subscriptionPlanAmount(company);
+  const openAmount = Number(company.outstanding_amount ?? company.open_amount ?? company.amount_due ?? (status.statusKey === "paid" || status.statusKey === "paused" ? 0 : planAmount));
+  const lastPaid = company.last_paid_at || company.last_payment_date || company.lastPaymentDate || platformBillingHistory(company).find((invoice) => String(invoice.status || "").toLowerCase().includes("betaald") || invoice.paid_at)?.paid_at || "";
+  const nextInvoice = company.next_invoice_date || company.nextInvoiceDate || firstDayNextMonthIso();
+  const dueDate = company.payment_due_date || company.due_date || "";
+  const daysLate = Number(company.days_overdue ?? company.days_late ?? (status.statusKey === "overdue" ? Math.max(1, daysBetweenToday(dueDate || addMonthsIso(nextInvoice, -1))) : 0));
+  return {
+    status,
+    paymentLabel: status.statusKey === "paid" ? "Betaald" : "Niet betaald",
+    openAmount,
+    lastPaid,
+    nextInvoice,
+    daysLate,
+    planAmount,
+    subscription: company.subscription_package || "basis",
+    pricePlan: company.price_plan || company.subscription_package || "basis",
+    workorders: companyProjects(company.id).length,
+    users: companyUsers(company.id).filter((user) => !user.deleted && userRole(user) !== ROLES.PLATFORM_ADMIN).length,
+    history: platformBillingHistory(company),
+  };
+}
+
+function renderBillingStatusBadge(info) {
+  return `<span class="billing-status-badge ${info.className}">${escapeHtml(info.label)}</span>`;
+}
+
+function renderPlatformBillingCompany(company) {
+  const isOpen = platformBillingOpenCompanies()[company.id] === true;
+  const summary = platformBillingSummary(company);
+  const amountClass = summary.status.statusKey === "overdue" ? "danger" : summary.status.statusKey === "open" ? "warn" : "ok";
+  return `<article class="rights-company-card billing-company-card ${isOpen ? "open" : ""}">
+    <button class="rights-company-toggle" type="button" onclick="togglePlatformBillingCompany('${company.id}')">
+      <span class="rights-caret">${isOpen ? "▾" : "▸"}</span>
+      <span class="rights-company-name">${escapeHtml(company.name || "-")}</span>
+      ${renderBillingStatusBadge(summary.status)}
+      <span class="billing-open-amount ${amountClass}">Openstaand: ${euro(summary.openAmount)}</span>
+    </button>
+    <div class="billing-company-preview">
+      <span>Status: ${escapeHtml(summary.status.label)}</span>
+      <span>Openstaand: ${euro(summary.openAmount)}</span>
+      <span>Laatste betaling: ${summary.lastPaid ? safeDate(summary.lastPaid) : "Niet ingevuld"}</span>
+    </div>
+    ${isOpen ? `<div class="billing-company-body">
+      <section class="billing-meta-grid">
+        <div class="meta"><span>Betaalstatus</span><strong>${escapeHtml(summary.status.label)}</strong></div>
+        <div class="meta"><span>Betaald / niet betaald</span><strong>${escapeHtml(summary.paymentLabel)}</strong></div>
+        <div class="meta ${amountClass}"><span>Openstaand bedrag</span><strong>${euro(summary.openAmount)}</strong></div>
+        <div class="meta"><span>Betalingsachterstand</span><strong>${summary.status.statusKey === "overdue" ? "Ja" : "Nee"}</strong></div>
+        <div class="meta"><span>Aantal dagen te laat</span><strong>${summary.daysLate}</strong></div>
+        <div class="meta"><span>Laatste betaaldatum</span><strong>${summary.lastPaid ? safeDate(summary.lastPaid) : "Niet ingevuld"}</strong></div>
+        <div class="meta"><span>Eerstvolgende factuurdatum</span><strong>${summary.nextInvoice ? safeDate(summary.nextInvoice) : "Niet ingevuld"}</strong></div>
+        <div class="meta"><span>Pakket/abonnement</span><strong>${escapeHtml(summary.subscription)}</strong></div>
+        <div class="meta"><span>Prijsplan</span><strong>${escapeHtml(summary.pricePlan)}</strong></div>
+        <div class="meta"><span>Aantal werkbonnen</span><strong>${summary.workorders}</strong></div>
+        <div class="meta"><span>Aantal gebruikers</span><strong>${summary.users}</strong></div>
+      </section>
+      <section class="panel subtle-panel billing-history">
+        <h3>Factuurhistorie</h3>
+        <div class="billing-history-list">
+          ${summary.history.length ? summary.history.map((invoice) => `<div class="billing-history-row">
+            <span>Factuur ${escapeHtml(invoice.invoice_number || invoice.id)}</span>
+            <strong>${euro(invoice.amount)}</strong>
+            <em>${escapeHtml(invoice.status || "-")}</em>
+            <small>${invoice.paid_at ? `Betaald: ${safeDate(invoice.paid_at)}` : invoice.due_date ? `Vervaldatum: ${safeDate(invoice.due_date)}` : invoice.invoice_date ? safeDate(invoice.invoice_date) : "-"}</small>
+          </div>`).join("") : `<p class="muted">Geen factuurhistorie beschikbaar.</p>`}
+        </div>
+      </section>
+    </div>` : ""}
+  </article>`;
+}
+
+function renderPlatformBilling() {
+  if (!isPlatformSuperAdmin()) return renderPlatformAccessDenied();
+  const search = platformBillingCompanySearch();
+  const companies = platformCompanies()
+    .filter((company) => !search || String(company.name || "").toLowerCase().includes(search))
+    .sort((a, b) => {
+      const aStatus = platformBillingSummary(a).status.statusKey === "overdue" ? 0 : platformBillingSummary(a).status.statusKey === "open" ? 1 : 2;
+      const bStatus = platformBillingSummary(b).status.statusKey === "overdue" ? 0 : platformBillingSummary(b).status.statusKey === "open" ? 1 : 2;
+      return aStatus - bStatus || String(a.name || "").localeCompare(String(b.name || ""));
+    });
+  const unpaid = companies.filter((company) => ["overdue", "open"].includes(platformBillingSummary(company).status.statusKey));
+  return `<section class="platform-rights-page platform-billing-page">
+    <section class="panel rights-intro">
+      <div class="article-head">
+        <div>
+          <h2>Facturatie</h2>
+          <p>Bekijk per bedrijf betaalstatus, achterstand, openstaand bedrag en factuurhistorie.</p>
+        </div>
+        <span class="badge ${unpaid.length ? "danger" : "ok"}">${unpaid.length} niet betaald</span>
+      </div>
+      <label>Zoek bedrijf
+        <input value="${escapeAttr(ui.platformBillingCompanySearch || "")}" placeholder="Zoek bedrijf..." oninput="setPlatformBillingCompanySearch(this.value)" />
+      </label>
+    </section>
+    <section class="rights-company-list">
+      ${companies.length ? companies.map(renderPlatformBillingCompany).join("") : `<section class="panel empty">Geen bedrijven gevonden.</section>`}
+    </section>
+  </section>`;
+}
+
+function platformBillingFilter() {
+  return ui.platformBillingFilter || "all";
+}
+
+function setPlatformBillingFilter(value) {
+  ui.platformBillingFilter = value || "all";
+  render();
+}
+
+function billingProviderConfig(company) {
+  const provider = company.billing_provider || company.payment_provider || company.provider || "Mollie/Stripe voorbereid";
+  return {
+    provider,
+    mode: company.billing_collection_method || company.collection_method || "Automatische incasso / abonnementsbetaling",
+    customerId: company.provider_customer_id || company.mollie_customer_id || company.stripe_customer_id || "",
+    subscriptionId: company.provider_subscription_id || company.mollie_subscription_id || company.stripe_subscription_id || "",
+  };
+}
+
+function platformBillingPayments(company) {
+  return [
+    ...(state.platformBillingPayments || []),
+    ...(state.billingPayments || []),
+    ...(state.subscriptionPayments || []),
+    ...(company.billing_payments || company.billingPayments || []),
+  ]
+    .filter((payment) => strictRecordCompanyId(payment) === company.id || payment.company_id === company.id || payment.companyId === company.id)
+    .map((payment) => ({
+      id: payment.id || uid("billing-payment"),
+      invoice_id: payment.invoice_id || payment.invoiceId || payment.billing_invoice_id || "",
+      amount: Number(payment.amount ?? payment.total ?? 0),
+      status: String(payment.status || payment.payment_status || "").toLowerCase(),
+      provider: payment.provider || payment.payment_provider || "",
+      transaction_id: payment.transaction_id || payment.transactionId || payment.provider_payment_id || "",
+      paid_at: payment.paid_at || payment.paidAt || payment.created_at || "",
+      failed_at: payment.failed_at || payment.failedAt || "",
+    }));
+}
+
+function normalizeBillingInvoice(company, invoice, index) {
+  const invoiceDate = invoice.invoice_date || invoice.created_at || invoice.createdAt || "";
+  const dueDate = invoice.due_date || invoice.dueDate || invoice.payment_due_date || (invoiceDate ? addMonthsIso(invoiceDate, 0) : "");
+  return {
+    id: invoice.id || invoice.invoice_id || invoice.invoice_number || invoice.number || `${company.id}-invoice-${index}`,
+    invoice_number: invoice.invoice_number || invoice.number || invoice.invoiceNumber || `#${new Date().getFullYear()}-${String(index + 1).padStart(3, "0")}`,
+    amount: Number(invoice.amount ?? invoice.total ?? invoice.total_inc_vat ?? invoice.open_amount ?? subscriptionPlanAmount(company)),
+    status: invoice.status || invoice.payment_status || invoice.billing_status || "",
+    invoice_date: invoiceDate,
+    paid_at: invoice.paid_at || invoice.paidAt || "",
+    due_date: dueDate,
+    next_invoice_date: invoice.next_invoice_date || invoice.nextInvoiceDate || "",
+    provider: invoice.provider || invoice.payment_provider || "",
+  };
+}
+
+function platformBillingHistory(company) {
+  const external = [
+    ...(state.platformBillingInvoices || []),
+    ...(state.billingInvoices || []),
+    ...(state.saasInvoices || []),
+  ].filter((invoice) => strictRecordCompanyId(invoice) === company.id || invoice.company_id === company.id || invoice.companyId === company.id);
+  const own = company.billing_history || company.billingHistory || company.invoices || company.billing_invoices || [];
+  let rows = [...own, ...external].map((invoice, index) => normalizeBillingInvoice(company, invoice, index));
+  if (!rows.length) {
+    const amount = subscriptionPlanAmount(company);
+    const nextDate = company.next_invoice_date || firstDayNextMonthIso();
+    const previousDate = addMonthsIso(nextDate, -1);
+    rows = [{
+      id: `${company.id}-current-invoice`,
+      invoice_number: `#${new Date(previousDate).getFullYear()}-${String(new Date(previousDate).getMonth() + 1).padStart(3, "0")}`,
+      amount,
+      status: company.billing_status || company.subscription_status || "betaald",
+      invoice_date: previousDate,
+      paid_at: company.last_paid_at || company.last_payment_date || "",
+      due_date: company.payment_due_date || company.due_date || previousDate,
+      next_invoice_date: nextDate,
+      provider: company.billing_provider || "",
+    }];
+  }
+  const payments = platformBillingPayments(company);
+  rows = rows.map((invoice) => {
+    const linkedPayments = payments.filter((payment) => payment.invoice_id === invoice.id || payment.invoice_id === invoice.invoice_number);
+    const successful = linkedPayments.filter((payment) => ["paid", "betaald", "succeeded", "success"].includes(payment.status));
+    const failed = linkedPayments.some((payment) => ["failed", "mislukt", "cancelled", "canceled"].includes(payment.status));
+    const paidAmount = successful.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const derivedStatus = successful.length && paidAmount >= invoice.amount ? "Betaald" : failed ? "Betaling mislukt" : invoice.status || "";
+    return {
+      ...invoice,
+      linked_payments: linkedPayments,
+      paid_amount: paidAmount,
+      open_amount: Math.max(0, invoice.amount - paidAmount),
+      status: derivedStatus || invoice.status,
+      paid_at: invoice.paid_at || successful[0]?.paid_at || "",
+      failed_payment: failed,
+    };
+  });
+  return rows.sort((a, b) => String(b.invoice_date || b.due_date || "").localeCompare(String(a.invoice_date || a.due_date || "")));
+}
+
+function invoiceStatusKey(invoice) {
+  const status = String(invoice.status || "").toLowerCase();
+  if (status.includes("mislukt") || status.includes("failed")) return "failed";
+  if (status.includes("betaald") || status.includes("paid") || status.includes("succeeded")) return "paid";
+  const daysLate = daysBetweenToday(invoice.due_date);
+  if (daysLate > 0) return "overdue";
+  if ((invoice.open_amount ?? invoice.amount) > 0) return "within_term";
+  return "paid";
+}
+
+function billingStatusFromInvoices(company, invoices) {
+  const raw = String(company.billing_status || company.subscription_status || "").toLowerCase();
+  if (company.blocked || raw === "paused" || raw === "cancelled") return { label: "Gepauzeerd", statusKey: "paused", className: "paused" };
+  if (invoices.some((invoice) => invoiceStatusKey(invoice) === "failed")) return { label: "Betaling mislukt", statusKey: "failed", className: "failed" };
+  if (invoices.some((invoice) => invoiceStatusKey(invoice) === "overdue")) return { label: "Achterstand", statusKey: "overdue", className: "overdue" };
+  if (invoices.some((invoice) => invoiceStatusKey(invoice) === "within_term")) return { label: "Binnen betaaltermijn", statusKey: "within_term", className: "within-term" };
+  return { label: "Betaald", statusKey: "paid", className: "paid" };
+}
+
+function platformBillingSummary(company) {
+  const history = platformBillingHistory(company);
+  const status = billingStatusFromInvoices(company, history);
+  const openInvoices = history.filter((invoice) => invoiceStatusKey(invoice) !== "paid");
+  const openAmount = openInvoices.reduce((sum, invoice) => sum + Number(invoice.open_amount ?? invoice.amount ?? 0), 0);
+  const paidInvoices = history.filter((invoice) => invoiceStatusKey(invoice) === "paid" || invoice.paid_at);
+  const lastPaid = company.last_paid_at || company.last_payment_date || company.lastPaymentDate || paidInvoices.map((invoice) => invoice.paid_at || invoice.invoice_date).filter(Boolean).sort().pop() || "";
+  const nextInvoice = company.next_invoice_date || company.nextInvoiceDate || history.find((invoice) => invoice.next_invoice_date)?.next_invoice_date || firstDayNextMonthIso();
+  const overdueInvoices = history.filter((invoice) => invoiceStatusKey(invoice) === "overdue");
+  const daysLate = Math.max(0, ...overdueInvoices.map((invoice) => daysBetweenToday(invoice.due_date)));
+  const nearestDue = openInvoices.map((invoice) => invoice.due_date).filter(Boolean).sort()[0] || "";
+  return {
+    status,
+    paymentLabel: status.statusKey === "paid" ? "Betaald" : "Niet betaald",
+    openAmount,
+    lastPaid,
+    nextInvoice,
+    dueDate: nearestDue,
+    daysLate,
+    planAmount: subscriptionPlanAmount(company),
+    subscription: company.subscription_package || "basis",
+    pricePlan: company.price_plan || company.subscription_package || "basis",
+    workorders: companyProjects(company.id).length,
+    users: companyUsers(company.id).filter((user) => !user.deleted && userRole(user) !== ROLES.PLATFORM_ADMIN).length,
+    history,
+    provider: billingProviderConfig(company),
+    lastReminderAt: company.billing_last_reminder_at || "",
+    reminderCount: Number(company.billing_reminder_count || 0),
+  };
+}
+
+function companyBillingAdmins(companyId) {
+  return companyUsers(companyId)
+    .filter((user) => !user.deleted && user.active !== false && userRole(user) === ROLES.COMPANY_ADMIN && user.email)
+    .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")));
+}
+
+function platformBillingReminderLogs(companyId) {
+  return platformAuditLogs().filter((log) => log.company_id === companyId && log.action === "betalingsmail verstuurd");
+}
+
+function billingPaymentLink(company, summary) {
+  const provider = String(summary.provider.provider || company.billing_provider || "mollie").toLowerCase();
+  const base = provider.includes("stripe") ? "https://pay.stripe.com/mock" : provider.includes("mollie") ? "https://payment.mollie.com/mock" : "https://werkbonsysteem.nl/betalen";
+  const params = new URLSearchParams({
+    companyId: company.id,
+    amount: String(summary.openAmount.toFixed(2)),
+    reference: `WBS-${company.id}-${new Date().getFullYear()}`,
+  });
+  return `${base}?${params.toString()}`;
+}
+
+function billingReminderSubject(summary) {
+  return `Betalingsherinnering Werkbonsysteem.nl - ${euro(summary.openAmount)} openstaand`;
+}
+
+function billingReminderBody(company, summary, paymentLink) {
+  const warning = ["overdue", "failed"].includes(summary.status.statusKey)
+    ? `\n\nLet op: uw betaling is te laat. Bij aanhoudende betalingsachterstand kan toegang tot betaalde modules worden beperkt.`
+    : "";
+  return `Beste ${company.name || "klant"},\n\nVolgens onze administratie staat er nog een bedrag open van ${euro(summary.openAmount)}.\n\nVervaldatum: ${summary.dueDate ? safeDate(summary.dueDate) : "Niet ingevuld"}\nAantal dagen te laat: ${summary.daysLate}\n\nU kunt de betaling direct voldoen via onderstaande betaallink:\n\n${paymentLink}${warning}\n\nMet vriendelijke groet,\nWerkbonsysteem.nl`;
+}
+
+function sendPlatformBillingReminder(companyId) {
+  if (!isPlatformSuperAdmin()) return alert("Alleen Platform Admin mag betalingsmails versturen.");
+  const company = byId(state.companies || [], companyId);
+  if (!company) return alert("Bedrijf niet gevonden.");
+  const summary = platformBillingSummary(company);
+  if (summary.openAmount <= 0 || summary.status.statusKey === "paid") return alert("Dit bedrijf heeft geen openstaand bedrag.");
+  const admins = companyBillingAdmins(company.id);
+  if (!admins.length) return alert("Geen Company Admin met e-mailadres gevonden voor dit bedrijf.");
+  const paymentLink = billingPaymentLink(company, summary);
+  const now = new Date().toISOString();
+  state.platformBillingEmails = state.platformBillingEmails || [];
+  const email = {
+    id: uid("billing-email"),
+    companyId: company.id,
+    company_id: company.id,
+    to_email: admins[0].email,
+    to_name: admins[0].name || admins[0].email,
+    cc_emails: admins.slice(1).map((admin) => admin.email),
+    subject: billingReminderSubject(summary),
+    body: billingReminderBody(company, summary, paymentLink),
+    payment_link: paymentLink,
+    provider: summary.provider.provider,
+    open_amount: summary.openAmount,
+    due_date: summary.dueDate,
+    days_late: summary.daysLate,
+    status: "concept_verzonden_mock",
+    created_at: now,
+    created_by: currentUser()?.id || "",
+  };
+  state.platformBillingEmails.push(email);
+  company.billing_last_reminder_at = now;
+  company.billing_reminder_count = Number(company.billing_reminder_count || 0) + 1;
+  company.last_billing_payment_link = paymentLink;
+  company.updated_at = now;
+  logPlatformAction("betalingsmail verstuurd", company.id, `Naar ${email.to_email}. Openstaand: ${euro(summary.openAmount)}. Betaallink: ${paymentLink}`);
+  saveState();
+  const mailto = `mailto:${encodeURIComponent(email.to_email)}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`;
+  window.location.href = mailto;
+  alert(`Betalingsmail aangemaakt voor ${email.to_email}.`);
+  render();
+}
+
+function markPlatformBillingPaymentResult(companyId, result) {
+  if (!isPlatformSuperAdmin()) return alert("Alleen Platform Admin mag betaalstatus wijzigen.");
+  const company = byId(state.companies || [], companyId);
+  if (!company) return;
+  const now = new Date().toISOString();
+  if (result === "paid") {
+    company.billing_status = "active";
+    company.outstanding_amount = 0;
+    company.last_paid_at = now;
+    logPlatformAction("betaling succesvol verwerkt", company.id, "Status automatisch naar Betaald gezet");
+  } else {
+    company.billing_status = "overdue";
+    company.last_failed_payment_at = now;
+    logPlatformAction("betaling mislukt verwerkt", company.id, "Status naar Betaling mislukt/Achterstand gezet");
+  }
+  company.updated_at = now;
+  saveState();
+  render();
+}
+
+function billingFilterMatches(summary) {
+  const filter = platformBillingFilter();
+  if (filter === "paid") return summary.status.statusKey === "paid";
+  if (filter === "open") return ["within_term", "open"].includes(summary.status.statusKey);
+  if (filter === "overdue") return ["overdue", "failed"].includes(summary.status.statusKey);
+  return true;
+}
+
+function renderPlatformBillingCompany(company) {
+  const isOpen = platformBillingOpenCompanies()[company.id] === true;
+  const summary = platformBillingSummary(company);
+  const amountClass = ["overdue", "failed"].includes(summary.status.statusKey) ? "danger" : ["within_term", "open"].includes(summary.status.statusKey) ? "warn" : "ok";
+  const reminders = platformBillingReminderLogs(company.id);
+  const canSendReminder = isPlatformSuperAdmin() && summary.openAmount > 0 && summary.status.statusKey !== "paid";
+  return `<article class="rights-company-card billing-company-card ${summary.status.className} ${isOpen ? "open" : ""}">
+    <button class="rights-company-toggle" type="button" onclick="togglePlatformBillingCompany('${company.id}')">
+      <span class="rights-caret">${isOpen ? "▾" : "▸"}</span>
+      <span class="rights-company-name">${escapeHtml(company.name || "-")}</span>
+      ${renderBillingStatusBadge(summary.status)}
+      <span class="billing-open-amount ${amountClass}">Openstaand: ${euro(summary.openAmount)}</span>
+    </button>
+    <div class="billing-company-preview">
+      <span>Status: ${escapeHtml(summary.status.label)}</span>
+      <span>Vervaldatum: ${summary.dueDate ? safeDate(summary.dueDate) : "Niet ingevuld"}</span>
+      <span>Dagen te laat: ${summary.daysLate}</span>
+    </div>
+    ${isOpen ? `<div class="billing-company-body">
+      <section class="billing-meta-grid">
+        <div class="meta"><span>Betaalstatus</span><strong>${escapeHtml(summary.status.label)}</strong></div>
+        <div class="meta"><span>Betaald / niet betaald</span><strong>${escapeHtml(summary.paymentLabel)}</strong></div>
+        <div class="meta ${amountClass}"><span>Openstaand bedrag</span><strong>${euro(summary.openAmount)}</strong></div>
+        <div class="meta"><span>Vervaldatum</span><strong>${summary.dueDate ? safeDate(summary.dueDate) : "Niet ingevuld"}</strong></div>
+        <div class="meta"><span>Aantal dagen te laat</span><strong>${summary.daysLate}</strong></div>
+        <div class="meta"><span>Laatste betaaldatum</span><strong>${summary.lastPaid ? safeDate(summary.lastPaid) : "Niet ingevuld"}</strong></div>
+        <div class="meta"><span>Eerstvolgende factuurdatum</span><strong>${summary.nextInvoice ? safeDate(summary.nextInvoice) : "Niet ingevuld"}</strong></div>
+        <div class="meta"><span>Pakket/abonnement</span><strong>${escapeHtml(summary.subscription)}</strong></div>
+        <div class="meta"><span>Prijsplan</span><strong>${escapeHtml(summary.pricePlan)}</strong></div>
+        <div class="meta"><span>Aantal werkbonnen</span><strong>${summary.workorders}</strong></div>
+        <div class="meta"><span>Aantal gebruikers</span><strong>${summary.users}</strong></div>
+        <div class="meta"><span>Betaalprovider</span><strong>${escapeHtml(summary.provider.provider)}</strong></div>
+        <div class="meta"><span>Laatste herinnering</span><strong>${summary.lastReminderAt ? safeDate(summary.lastReminderAt) : "Nog niet verstuurd"}</strong></div>
+        <div class="meta"><span>Aantal herinneringen</span><strong>${summary.reminderCount || reminders.length}</strong></div>
+      </section>
+      ${canSendReminder ? `<section class="panel subtle-panel billing-reminder-box">
+        <div class="article-head">
+          <div>
+            <h3>Betalingsmail</h3>
+            <p>Maak automatisch een betalingsherinnering aan voor de Company Admin van dit bedrijf.</p>
+          </div>
+          <button class="btn warn" type="button" onclick="sendPlatformBillingReminder('${company.id}')">Betalingsmail versturen</button>
+        </div>
+        <div class="meta-grid">
+          <div class="meta"><span>Ontvanger</span><strong>${escapeHtml(companyBillingAdmins(company.id)[0]?.email || "Geen Company Admin e-mail")}</strong></div>
+          <div class="meta"><span>Onderwerp</span><strong>${escapeHtml(billingReminderSubject(summary))}</strong></div>
+          <div class="meta"><span>Betaallink provider</span><strong>${escapeHtml(summary.provider.provider || "Mollie/Stripe voorbereid")}</strong></div>
+        </div>
+      </section>` : ""}
+      <section class="panel subtle-panel billing-provider-box">
+        <h3>Automatische betalingscontrole</h3>
+        <p>Mollie en Stripe zijn voorbereid voor automatische incasso en abonnementsbetalingen. Succesvolle providerbetalingen kunnen facturen automatisch op Betaald zetten; mislukte betalingen markeren het bedrijf als Betaling mislukt/Achterstand.</p>
+        <div class="meta-grid">
+          <div class="meta"><span>Provider</span><strong>${escapeHtml(summary.provider.provider)}</strong></div>
+          <div class="meta"><span>Betaalwijze</span><strong>${escapeHtml(summary.provider.mode)}</strong></div>
+          <div class="meta"><span>Customer ID</span><strong>${escapeHtml(summary.provider.customerId || "Niet gekoppeld")}</strong></div>
+          <div class="meta"><span>Subscription ID</span><strong>${escapeHtml(summary.provider.subscriptionId || "Niet gekoppeld")}</strong></div>
+        </div>
+        <div class="button-row">
+          <button class="btn success" type="button" onclick="markPlatformBillingPaymentResult('${company.id}', 'paid')">Simuleer succesvolle betaling</button>
+          <button class="btn danger" type="button" onclick="markPlatformBillingPaymentResult('${company.id}', 'failed')">Simuleer mislukte betaling</button>
+        </div>
+      </section>
+      <section class="panel subtle-panel billing-history">
+        <h3>Factuurhistorie</h3>
+        <div class="billing-history-list">
+          ${summary.history.length ? summary.history.map((invoice) => {
+            const statusKey = invoiceStatusKey(invoice);
+            return `<div class="billing-history-row ${statusKey}">
+              <span>Factuur ${escapeHtml(invoice.invoice_number || invoice.id)}</span>
+              <strong>${euro(invoice.amount)}</strong>
+              <em>${escapeHtml(statusKey === "paid" ? "Betaald" : statusKey === "failed" ? "Betaling mislukt" : statusKey === "overdue" ? "Achterstand" : "Binnen betaaltermijn")}</em>
+              <small>Vervaldatum: ${invoice.due_date ? safeDate(invoice.due_date) : "-"}${statusKey === "overdue" ? ` · ${daysBetweenToday(invoice.due_date)} dagen te laat` : ""}</small>
+            </div>`;
+          }).join("") : `<p class="muted">Geen factuurhistorie beschikbaar.</p>`}
+        </div>
+      </section>
+    </div>` : ""}
+  </article>`;
+}
+
+function renderPlatformBilling() {
+  if (!isPlatformSuperAdmin()) return renderPlatformAccessDenied();
+  const search = platformBillingCompanySearch();
+  const companies = platformCompanies()
+    .map((company) => ({ company, summary: platformBillingSummary(company) }))
+    .filter(({ company }) => !search || String(company.name || "").toLowerCase().includes(search))
+    .filter(({ summary }) => billingFilterMatches(summary))
+    .sort((a, b) => {
+      const rank = { failed: 0, overdue: 1, within_term: 2, open: 2, paused: 3, paid: 4 };
+      return (rank[a.summary.status.statusKey] ?? 9) - (rank[b.summary.status.statusKey] ?? 9) || String(a.company.name || "").localeCompare(String(b.company.name || ""));
+    });
+  const allSummaries = platformCompanies().map(platformBillingSummary);
+  const wanbetalers = allSummaries.filter((summary) => ["failed", "overdue"].includes(summary.status.statusKey));
+  return `<section class="platform-rights-page platform-billing-page">
+    <section class="panel rights-intro">
+      <div class="article-head">
+        <div>
+          <h2>Facturatie</h2>
+          <p>Automatische betalingscontrole voor facturen, betaaltermijnen en providerbetalingen.</p>
+        </div>
+        <span class="badge ${wanbetalers.length ? "danger" : "ok"}">${wanbetalers.length} wanbetalers</span>
+      </div>
+      <div class="billing-filter-row">
+        <label>Zoek bedrijf
+          <input value="${escapeAttr(ui.platformBillingCompanySearch || "")}" placeholder="Zoek bedrijf..." oninput="setPlatformBillingCompanySearch(this.value)" />
+        </label>
+        <div class="segmented">
+          ${[["all", "Alle"], ["paid", "Betaald"], ["open", "Openstaand"], ["overdue", "Achterstand"]].map(([key, label]) => `<button type="button" class="${platformBillingFilter() === key ? "active" : ""}" onclick="setPlatformBillingFilter('${key}')">${label}</button>`).join("")}
+        </div>
+      </div>
+    </section>
+    <section class="rights-company-list">
+      ${companies.length ? companies.map(({ company }) => renderPlatformBillingCompany(company)).join("") : `<section class="panel empty">Geen bedrijven gevonden.</section>`}
+    </section>
+  </section>`;
+}
+
+function platformRightsCompanySearch() {
+  return String(ui.platformRightsCompanySearch || "").trim().toLowerCase();
+}
+
+function setPlatformRightsCompanySearch(value) {
+  ui.platformRightsCompanySearch = value || "";
+  scheduleRender();
+}
+
+function platformRightsCompanyFilter() {
+  return ui.platformRightsCompanyFilter || "ALL";
+}
+
+function setPlatformRightsCompanyFilter(value) {
+  ui.platformRightsCompanyFilter = value || "ALL";
+  render();
+}
+
+function platformRightsOpenUsers() {
+  ui.platformRightsOpenUsers = ui.platformRightsOpenUsers || {};
+  return ui.platformRightsOpenUsers;
+}
+
+function togglePlatformRightsUser(userId) {
+  const open = platformRightsOpenUsers();
+  open[userId] = !open[userId];
+  render();
+}
+
+function setAllPlatformRightsUsersOpen(openAll) {
+  const open = platformRightsOpenUsers();
+  platformRightsVisibleUsers().forEach((user) => {
+    open[user.id] = Boolean(openAll);
+  });
+  render();
+}
+
+function platformRightsOpenCompanies() {
+  ui.platformRightsOpenCompanies = ui.platformRightsOpenCompanies || {};
+  return ui.platformRightsOpenCompanies;
+}
+
+function togglePlatformRightsCompany(companyId) {
+  const open = platformRightsOpenCompanies();
+  open[companyId] = !open[companyId];
+  render();
+}
+
+function platformRightsCompanyUsers(companyId) {
+  return (state.users || [])
+    .filter((user) => !user.deleted)
+    .filter((user) => userRole(user) !== ROLES.PLATFORM_ADMIN)
+    .filter((user) => userRole(user) === ROLES.MECHANIC || userRole(user) === ROLES.COMPANY_ADMIN)
+    .filter((user) => strictRecordCompanyId(user) === companyId)
+    .sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")));
+}
+
+function platformRightsUserHaystack(user) {
+  const company = byId(state.companies || [], strictRecordCompanyId(user));
+  return [user.name, user.email, userRole(user), roleLabel(userRole(user)), company?.name, user.active === false ? "inactief" : "actief"].join(" ").toLowerCase();
+}
+
+function platformRightsVisibleUsers() {
+  const search = platformRightsCompanySearch();
+  const companyFilter = platformRightsCompanyFilter();
+  return (state.users || [])
+    .filter((user) => !user.deleted)
+    .filter((user) => userRole(user) !== ROLES.PLATFORM_ADMIN)
+    .filter((user) => userRole(user) === ROLES.MECHANIC || userRole(user) === ROLES.COMPANY_ADMIN)
+    .filter((user) => strictRecordCompanyId(user))
+    .filter((user) => companyFilter === "ALL" || strictRecordCompanyId(user) === companyFilter)
+    .filter((user) => !search || platformRightsUserHaystack(user).includes(search))
+    .sort((a, b) => {
+      const companyCompare = String(byId(state.companies || [], strictRecordCompanyId(a))?.name || "").localeCompare(String(byId(state.companies || [], strictRecordCompanyId(b))?.name || ""));
+      return companyCompare || String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""));
+    });
+}
+
+function renderPlatformRightsUser(user) {
+  syncUserPermissionAliases(user);
+  const role = userRole(user);
+  const companyId = strictRecordCompanyId(user);
+  const company = byId(state.companies || [], companyId);
+  const isOpen = platformRightsOpenUsers()[user.id] === true;
+  const roleOptions = roleOptionsForUserManagement();
+  const companyOptions = platformCompanies().filter((item) => item.active !== false);
+  const activeModules = moduleCatalog().filter((module) => company?.modules_enabled?.[module.key] === true);
+  return `<article class="rights-user-card ${isOpen ? "open" : ""}">
+    <button class="rights-user-toggle" type="button" onclick="togglePlatformRightsUser('${user.id}')">
+      <span class="rights-caret">${isOpen ? "▾" : "▸"}</span>
+      <span class="rights-user-name">${escapeHtml(user.name || "-")}</span>
+      <span class="muted">${escapeHtml(user.email || "-")} | ${escapeHtml(roleLabel(role))} | ${escapeHtml(company?.name || "-")} | ${user.active === false ? "Inactief" : "Actief"}</span>
+    </button>
+    ${isOpen ? `<div class="rights-user-body">
+      <section class="user-permission-section">
+        <h4>Basisgegevens</h4>
+        <div class="user-permission-grid">
+          <label>Actief <select onchange="updateUser('${user.id}', 'active', this.value === 'true')"><option value="true" ${user.active !== false ? "selected" : ""}>Ja</option><option value="false" ${user.active === false ? "selected" : ""}>Nee</option></select></label>
+          <label>Naam <input value="${escapeAttr(user.name || "")}" onchange="updateUser('${user.id}', 'name', this.value)" /></label>
+          <label>E-mail <input type="email" value="${escapeAttr(user.email || "")}" onchange="updateUser('${user.id}', 'email', this.value)" /></label>
+          <label>Rol <select onchange="updateUser('${user.id}', 'role', this.value)">${roleOptions.map(([value, label]) => `<option value="${value}" ${role === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+          <label>Bedrijf <select onchange="updateUser('${user.id}', 'company_id', this.value)">${companyOptions.map((item) => `<option value="${item.id}" ${companyId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
+        </div>
+      </section>
+      ${renderPermissionGroups(user, (field) => `updateUser('${user.id}', '${field}', this.value === 'true')`)}
+      <section class="user-permission-section">
+        <h4>Module rechten</h4>
+        <div class="module-badge-list">${activeModules.length ? activeModules.map((module) => `<span class="badge ok">${escapeHtml(module.label)}</span>`).join("") : `<span class="muted">Geen actieve modules voor dit bedrijf.</span>`}</div>
+      </section>
+      <div class="button-row">
+        <button class="btn secondary" type="button" onclick="saveUserRow()">Opslaan</button>
+        <button class="btn warn" type="button" onclick="toggleUserActive('${user.id}')">${user.active !== false ? "Deactiveren" : "Activeren"}</button>
+        <button class="btn danger" type="button" onclick="requestDeleteUser('${user.id}')">Verwijderen</button>
+      </div>
+    </div>` : ""}
+  </article>`;
+}
+
+function renderPlatformRightsCompany(company) {
+  const users = platformRightsCompanyUsers(company.id);
+  const isOpen = platformRightsOpenCompanies()[company.id] === true;
+  return `<article class="rights-company-card ${isOpen ? "open" : ""}">
+    <button class="rights-company-toggle" type="button" onclick="togglePlatformRightsCompany('${company.id}')">
+      <span class="rights-caret">${isOpen ? "▾" : "▸"}</span>
+      <span class="rights-company-name">${escapeHtml(company.name || "-")}</span>
+      <span class="badge">${users.length} gebruiker${users.length === 1 ? "" : "s"}</span>
+      <span class="muted">${company.active === false || company.blocked ? "Inactief/geblokkeerd" : "Actief"}</span>
+    </button>
+    ${isOpen ? `<div class="rights-company-users">
+      ${users.length ? users.map(renderPlatformRightsUser).join("") : `<div class="empty">Geen gebruikers onder dit bedrijf.</div>`}
+    </div>` : ""}
+  </article>`;
+}
+
+function renderPlatformPermissions() {
+  if (!isPlatformSuperAdmin()) return renderPlatformAccessDenied();
+  const companies = platformCompanies()
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const users = platformRightsVisibleUsers();
+  const pendingDeleteUser = ui.pendingDeleteUserId ? byId(state.users || [], ui.pendingDeleteUserId) : null;
+  return `<section class="platform-rights-page">
+    <section class="panel rights-intro">
+      <div class="article-head">
+        <div>
+          <h2>Rechten</h2>
+          <p>Beheer rechten per gebruiker. Gebruikers zijn standaard ingeklapt; details verschijnen pas na uitklappen.</p>
+        </div>
+        <span class="badge">${users.length} gebruikers</span>
+      </div>
+      <div class="form-grid">
+        <label>Bedrijf
+          <select onchange="setPlatformRightsCompanyFilter(this.value)">
+            <option value="ALL" ${platformRightsCompanyFilter() === "ALL" ? "selected" : ""}>Alle bedrijven</option>
+            ${companies.map((company) => `<option value="${company.id}" ${platformRightsCompanyFilter() === company.id ? "selected" : ""}>${escapeHtml(company.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Zoeken
+          <input value="${escapeAttr(ui.platformRightsCompanySearch || "")}" placeholder="Zoek gebruiker, e-mail, rol of bedrijf..." oninput="setPlatformRightsCompanySearch(this.value)" />
+        </label>
+      </div>
+      <div class="button-row" style="margin-top:14px">
+        <button class="btn secondary" type="button" onclick="setAllPlatformRightsUsersOpen(true)">Alles uitklappen</button>
+        <button class="btn ghost" type="button" onclick="setAllPlatformRightsUsersOpen(false)">Alles inklappen</button>
+      </div>
+    </section>
+    <section class="rights-company-list">
+      ${users.length ? users.map(renderPlatformRightsUser).join("") : `<section class="panel empty">Geen gebruikers gevonden.</section>`}
+    </section>
+    <section class="rights-create-user">
+      ${renderNewUserForm()}
+    </section>
+    ${pendingDeleteUser && userRole(pendingDeleteUser) !== ROLES.PLATFORM_ADMIN ? `<section class="modal-backdrop"><div class="panel confirm-modal"><h2>Gebruiker verwijderen</h2><p>Weet je zeker dat je deze gebruiker wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.</p><div class="button-row"><button class="btn secondary" type="button" onclick="cancelDeleteUser()">Annuleren</button><button class="btn danger" type="button" onclick="confirmDeleteUser()">Definitief verwijderen</button></div></div></section>` : ""}
+  </section>`;
 }
 
 function renderOffice(section = "") {
@@ -14204,15 +20189,39 @@ function pageTitle(route) {
 function renderHome() {
   const canCreateCallCustomer = canCreateCustomerFromCall();
   const weekCount = isMechanic() ? mechanicPlanningEvents("week").length : 0;
+  if (isMechanic()) return renderMechanicHomeWithMenuOrder(weekCount, canCreateCallCustomer);
   return `<section class="grid home-grid">
-    ${isMechanic() ? `<section class="stats full"><div class="stat-card"><span>Planning deze week</span><strong>${weekCount}</strong></div></section>` : ""}
-    ${isMechanic() ? homeTile("start/planning", "Mijn planning", "Bekijk je planning, adressen en werkbonnen.", "P") : ""}
     ${canCreateCallCustomer ? homeTile("call-customer", "Nieuwe klant uit telefoongesprek", "Maak snel klant, notitie of afspraak.", "Tel") : ""}
-    ${homeTile("new", "Nieuw project", "Start een registratie voor M001, M004 of beide.", "+")}
+    ${hasWorkorderPermission("can_create_workorders") ? homeTile("new", "Nieuw project", "Start een registratie voor M001, M004 of beide.", "+") : ""}
     ${homeTile("active", "Lopende projecten", "Ga verder met open projectregistraties.", "Open")}
     ${homeTile("completed", "Afgeronde projecten", "Bekijk rapporten, CSV en PDF.", "Done")}
     ${isCompanyAdmin() ? homeTile("admin", "Admin", "Bedrijfsbeheer en planning.", "A") : ""}
     ${isPlatformSuperAdmin() ? homeTile("platform", "Platform", "Beheer WerkbonSysteem.nl.", "P") : ""}
+  </section>`;
+}
+
+function mechanicHomeTileDefinitions(canCreateCallCustomer) {
+  const rows = [
+    ["Planning", () => homeTile("start/planning", "Mijn planning", "Bekijk je planning, adressen en werkbonnen.", "P")],
+    ["Werkbonnen", () => `${hasWorkorderPermission("can_create_workorders") ? homeTile("new", "Nieuw project", "Start een registratie voor M001, M004 of beide.", "+") : ""}${homeTile("active", "Lopende projecten", "Ga verder met open projectregistraties.", "Open")}${homeTile("completed", "Afgeronde projecten", "Bekijk rapporten, CSV en PDF.", "Done")}`],
+    ["Klanten", () => canCreateCallCustomer ? homeTile("call-customer", "Nieuwe klant uit telefoongesprek", "Maak snel klant, notitie of afspraak.", "Tel") : ""],
+    ["Busvoorraad", () => isCompanyModuleActive("van_stock") ? homeTile("busvoorraad", "Mijn busvoorraad", "Bekijk voorraad, besteladvies en inventarisatie.", "B") : ""],
+    ["Toestellendatabase", () => isCompanyModuleActive("workorders") ? homeTile("active", "Toestellendatabase", "Bekijk toestelgegevens via toegewezen werkbonnen.", "T") : ""],
+    ["WhatsApp", () => canUseWhatsApp() ? homeTile("whatsapp", "WhatsApp", "Lees en beantwoord klantberichten.", "W") : ""],
+  ];
+  const activeLabels = activeMenuItemsForRole("mechanic").map(([label]) => label);
+  return rows.filter(([label, renderTile]) => activeLabels.includes(label) && renderTile());
+}
+
+function renderMechanicHomeWithMenuOrder(weekCount, canCreateCallCustomer) {
+  const favorites = officeFavoriteLabels();
+  const definitions = mechanicHomeTileDefinitions(canCreateCallCustomer);
+  const favoriteTiles = definitions.filter(([label]) => favorites.includes(label)).map(([, renderTile]) => renderTile()).join("");
+  const regularTiles = definitions.filter(([label]) => !favorites.includes(label)).map(([, renderTile]) => renderTile()).join("");
+  return `<section class="grid home-grid">
+    <section class="stats full"><div class="stat-card"><span>Planning deze week</span><strong>${weekCount}</strong></div></section>
+    ${favoriteTiles ? `<section class="panel full mechanic-favorites"><h2>Favorieten</h2><div class="grid home-grid">${favoriteTiles}</div></section>` : ""}
+    ${regularTiles}
   </section>`;
 }
 
@@ -14243,6 +20252,473 @@ function renderMechanicCalendarSidebar() {
   </aside>`;
 }
 
+function ensureVanStockState() {
+  state.vanVehicles = state.vanVehicles || [];
+  state.vanStockItems = state.vanStockItems || [];
+  state.vanStockMovements = state.vanStockMovements || [];
+  state.vanStockCounts = state.vanStockCounts || [];
+  return state;
+}
+
+function vanStockStatus(item) {
+  const qty = Number(item.quantity ?? 0);
+  const min = Number(item.minimum_stock ?? 0);
+  if (qty <= 0 || qty < min) return { label: "Bestellen", className: "danger", icon: "Rood" };
+  if (qty === min) return { label: "Laag", className: "warn", icon: "Oranje" };
+  return { label: "Op voorraad", className: "ok", icon: "Groen" };
+}
+
+function companyMechanics(companyId = currentCompanyId()) {
+  return (state.users || []).filter((user) => !user.deleted && user.active !== false && userRole(user) === ROLES.MECHANIC && strictRecordCompanyId(user) === companyId);
+}
+
+function ensureVanForMechanic(user) {
+  ensureVanStockState();
+  if (!user) return null;
+  const companyId = strictRecordCompanyId(user);
+  let van = state.vanVehicles.find((row) => row.mechanic_id === user.id && strictRecordCompanyId(row) === companyId);
+  if (!van) {
+    van = {
+      id: uid("van"),
+      company_id: companyId,
+      companyId: companyId,
+      mechanic_id: user.id,
+      mechanic_name: user.name || "",
+      vehicle: "",
+      license_plate: "",
+      bus_number: "",
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    state.vanVehicles.push(van);
+  }
+  return van;
+}
+
+function vanItemsForMechanic(mechanicId, companyId = currentCompanyId()) {
+  ensureVanStockState();
+  return state.vanStockItems.filter((item) => !item.deleted && item.mechanic_id === mechanicId && strictRecordCompanyId(item) === companyId);
+}
+
+function vanStockItemValue(item) {
+  return Number(item.quantity || 0) * Number(item.purchase_price || 0);
+}
+
+function vanStockStats(mechanicId, companyId = currentCompanyId()) {
+  const items = vanItemsForMechanic(mechanicId, companyId);
+  const movements = (state.vanStockMovements || []).filter((movement) => movement.mechanic_id === mechanicId && strictRecordCompanyId(movement) === companyId);
+  const month = new Date().toISOString().slice(0, 7);
+  return {
+    value: items.reduce((sum, item) => sum + vanStockItemValue(item), 0),
+    count: items.length,
+    belowMinimum: items.filter((item) => Number(item.quantity || 0) < Number(item.minimum_stock || 0)).length,
+    lastCount: (state.vanStockCounts || []).filter((count) => count.mechanic_id === mechanicId && strictRecordCompanyId(count) === companyId).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0],
+    usedThisMonth: movements.filter((movement) => movement.type === "workorder_usage" && String(movement.created_at || "").slice(0, 7) === month).reduce((sum, movement) => sum + Math.abs(Number(movement.quantity || 0)), 0),
+  };
+}
+
+function renderVanStockStatusBadge(item) {
+  const status = vanStockStatus(item);
+  return `<span class="badge ${status.className}">${status.label}</span>`;
+}
+
+function renderVanStockModule() {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return renderNoOfficeAccess();
+  if (!isCompanyModuleActive("van_stock")) return moduleInactiveMessage();
+  ensureVanStockState();
+  const mechanics = companyMechanics();
+  const totalItems = state.vanStockItems.filter((item) => isSameCompany(item) && !item.deleted);
+  const low = totalItems.filter((item) => Number(item.quantity || 0) < Number(item.minimum_stock || 0));
+  return `<section class="van-stock-page">
+    <section class="office-page-head">
+      <div><h2>Busvoorraad</h2><p>Digitale busvoorraad per monteur, overboekingen en besteladviezen.</p></div>
+      <button class="btn secondary" type="button" onclick="exportVanStockCsv()">Export CSV</button>
+    </section>
+    <section class="stats office-kpis">
+      <div class="stat-card"><span>Bussen</span><strong>${mechanics.length}</strong></div>
+      <div class="stat-card"><span>Artikelen</span><strong>${totalItems.length}</strong></div>
+      <div class="stat-card"><span>Onder minimum</span><strong>${low.length}</strong></div>
+      <div class="stat-card"><span>Voorraadwaarde</span><strong>${euro(totalItems.reduce((sum, item) => sum + vanStockItemValue(item), 0))}</strong></div>
+    </section>
+    ${renderVanStockTransferPanel(mechanics)}
+    <section class="van-stock-list">${mechanics.map(renderVanStockMechanicCard).join("") || `<section class="panel empty">Geen monteurs gevonden.</section>`}</section>
+    ${renderVanStockReports()}
+  </section>`;
+}
+
+function renderVanStockTransferPanel(mechanics) {
+  const warehouseItems = (state.garageArticles || []).filter((article) => isSameCompany(article) && article.active !== false);
+  return `<section class="panel">
+    <h2>Materiaal toevoegen / overboeken</h2>
+    <form class="form-grid" onsubmit="saveVanStockTransfer(event)">
+      <label>Monteur <select name="mechanic_id" required>${mechanics.map((user) => `<option value="${user.id}">${escapeHtml(user.name)}</option>`).join("")}</select></label>
+      <label>Actie <select name="action"><option value="warehouse_to_van">Magazijn naar bus</option><option value="van_to_warehouse">Bus naar magazijn</option><option value="correction">Voorraadcorrectie</option></select></label>
+      <label>Magazijnartikel <select name="warehouse_article_id"><option value="">Handmatig artikel</option>${warehouseItems.map((article) => `<option value="${article.id}">${escapeHtml(article.description)} - ${escapeHtml(article.supplierArticleNumber || "")}</option>`).join("")}</select></label>
+      <label>Artikelnummer <input name="article_number" placeholder="MT4-230-NC-HCC" /></label>
+      <label>Omschrijving <input name="description" placeholder="Omschrijving" /></label>
+      <label>Merk <input name="brand" placeholder="Merk" /></label>
+      <label>Categorie <input name="category" placeholder="Koppelingen, Appendages, Kabels..." /></label>
+      <label>Locatie in bus <input name="location" placeholder="Bak 1 / lade links" /></label>
+      <label>Aantal <input name="quantity" type="number" min="0" step="1" value="1" required /></label>
+      <label>Minimum voorraad <input name="minimum_stock" type="number" min="0" step="1" value="1" /></label>
+      <label>Maximum voorraad <input name="maximum_stock" type="number" min="0" step="1" value="10" /></label>
+      <label>Prijs per stuk <input name="purchase_price" type="number" min="0" step="0.01" value="0" /></label>
+      <button class="btn success" type="submit">Boeking opslaan</button>
+    </form>
+  </section>`;
+}
+
+function renderVanStockMechanicCard(user) {
+  const van = ensureVanForMechanic(user);
+  const items = vanItemsForMechanic(user.id, strictRecordCompanyId(user));
+  const stats = vanStockStats(user.id, strictRecordCompanyId(user));
+  return `<section class="panel van-card">
+    <div class="article-head">
+      <div><h2>${escapeHtml(user.name)}</h2><p>${escapeHtml(van.vehicle || "Voertuig niet ingevuld")} ${van.license_plate ? `- ${escapeHtml(van.license_plate)}` : ""}</p></div>
+      <span class="badge">${items.length} artikelen</span>
+    </div>
+    <div class="form-grid">
+      <label>Voertuig <input value="${escapeAttr(van.vehicle || "")}" onchange="updateVanVehicle('${van.id}', 'vehicle', this.value)" placeholder="VW Transporter" /></label>
+      <label>Kenteken <input value="${escapeAttr(van.license_plate || "")}" onchange="updateVanVehicle('${van.id}', 'license_plate', this.value)" placeholder="V-123-AB" /></label>
+      <label>Busnummer <input value="${escapeAttr(van.bus_number || "")}" onchange="updateVanVehicle('${van.id}', 'bus_number', this.value)" /></label>
+      <label>Actieve voorraad <select onchange="updateVanVehicle('${van.id}', 'active', this.value === 'true')"><option value="true" ${van.active !== false ? "selected" : ""}>Ja</option><option value="false" ${van.active === false ? "selected" : ""}>Nee</option></select></label>
+    </div>
+    <section class="stats office-kpis compact">
+      <div class="stat-card"><span>Voorraadwaarde</span><strong>${euro(stats.value)}</strong></div>
+      <div class="stat-card"><span>Onder minimum</span><strong>${stats.belowMinimum}</strong></div>
+      <div class="stat-card"><span>Laatste inventarisatie</span><strong>${stats.lastCount ? safeDate(stats.lastCount.created_at) : "-"}</strong></div>
+      <div class="stat-card"><span>Gebruikt deze maand</span><strong>${stats.usedThisMonth}</strong></div>
+    </section>
+    ${renderVanStockItemsTable(items, true)}
+    ${renderVanStockAdvice(items)}
+  </section>`;
+}
+
+function renderVanStockItemsTable(items, editable = false) {
+  return `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Artikelnummer</th><th>Omschrijving</th><th>Merk</th><th>Categorie</th><th>Locatie</th><th>Aanwezig</th><th>Min</th><th>Max</th><th>Waarde</th>${editable ? "<th>Actie</th>" : ""}</tr></thead><tbody>${items.map((item) => `<tr>
+    <td>${renderVanStockStatusBadge(item)}</td>
+    <td>${escapeHtml(item.article_number || "-")}</td>
+    <td>${escapeHtml(item.description || "-")}</td>
+    <td>${escapeHtml(item.brand || "-")}</td>
+    <td>${escapeHtml(item.category || "-")}</td>
+    <td>${escapeHtml(item.location || "-")}</td>
+    <td>${editable ? `<input type="number" min="0" value="${Number(item.quantity || 0)}" onchange="updateVanStockItem('${item.id}', 'quantity', this.value)" />` : Number(item.quantity || 0)}</td>
+    <td>${editable ? `<input type="number" min="0" value="${Number(item.minimum_stock || 0)}" onchange="updateVanStockItem('${item.id}', 'minimum_stock', this.value)" />` : Number(item.minimum_stock || 0)}</td>
+    <td>${editable ? `<input type="number" min="0" value="${Number(item.maximum_stock || 0)}" onchange="updateVanStockItem('${item.id}', 'maximum_stock', this.value)" />` : Number(item.maximum_stock || 0)}</td>
+    <td>${euro(vanStockItemValue(item))}</td>
+    ${editable ? `<td><button class="btn secondary" type="button" onclick="deleteVanStockItem('${item.id}')">Verwijderen</button></td>` : ""}
+  </tr>`).join("") || `<tr><td colspan="${editable ? 11 : 10}">Geen busvoorraad geregistreerd.</td></tr>`}</tbody></table></div>`;
+}
+
+function renderVanStockAdvice(items) {
+  const rows = items.filter((item) => Number(item.quantity || 0) < Number(item.minimum_stock || 0));
+  return `<section class="subtle-panel"><h3>Besteladvies</h3>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Artikel</th><th>Huidig</th><th>Minimum</th><th>Advies</th></tr></thead><tbody>${rows.map((item) => {
+    const advice = Math.max(Number(item.maximum_stock || 0) - Number(item.quantity || 0), Number(item.minimum_stock || 0) * 2);
+    return `<tr><td>${escapeHtml(item.article_number || item.description || "-")}</td><td>${Number(item.quantity || 0)}</td><td>${Number(item.minimum_stock || 0)}</td><td>Bestel ${advice}</td></tr>`;
+  }).join("")}</tbody></table></div>` : `<p class="muted">Geen besteladvies. Alle artikelen zijn op niveau.</p>`}</section>`;
+}
+
+function renderVanStockReports() {
+  const movements = (state.vanStockMovements || []).filter((movement) => isSameCompany(movement));
+  const byArticle = new Map();
+  movements.filter((movement) => movement.type === "workorder_usage").forEach((movement) => {
+    const key = movement.article_number || movement.description || movement.item_id;
+    const row = byArticle.get(key) || { label: key, quantity: 0 };
+    row.quantity += Math.abs(Number(movement.quantity || 0));
+    byArticle.set(key, row);
+  });
+  const top = [...byArticle.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 20);
+  return `<section class="panel"><h2>Rapportages</h2><div class="table-wrap"><table><thead><tr><th>Rapport</th><th>Beschikbaar</th></tr></thead><tbody>${["Verbruik per monteur", "Verbruik per klant", "Verbruik per werkbon", "Verbruik per artikel", "Voorraadwaarde per bus", "Top 20 meest gebruikte artikelen"].map((label) => `<tr><td>${label}</td><td>Ja</td></tr>`).join("")}</tbody></table></div>
+    <h3>Top gebruikte artikelen</h3><div class="table-wrap"><table><thead><tr><th>Artikel</th><th>Aantal</th></tr></thead><tbody>${top.map((row) => `<tr><td>${escapeHtml(row.label)}</td><td>${row.quantity}</td></tr>`).join("") || `<tr><td colspan="2">Nog geen verbruik geregistreerd.</td></tr>`}</tbody></table></div></section>`;
+}
+
+function saveVanStockTransfer(event) {
+  event.preventDefault();
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return renderNoOfficeAccess();
+  ensureVanStockState();
+  const form = new FormData(event.target);
+  const mechanicId = String(form.get("mechanic_id") || "");
+  const mechanic = byId(state.users || [], mechanicId);
+  if (!mechanic || !isSameCompany(mechanic)) return alert("Kies een monteur binnen het eigen bedrijf.");
+  const companyId = strictRecordCompanyId(mechanic);
+  const warehouseArticle = byId(state.garageArticles || [], String(form.get("warehouse_article_id") || ""));
+  const action = String(form.get("action") || "warehouse_to_van");
+  const qty = Math.max(0, Number(form.get("quantity") || 0));
+  const articleNumber = String(form.get("article_number") || warehouseArticle?.supplierArticleNumber || "").trim();
+  const description = String(form.get("description") || warehouseArticle?.description || "").trim();
+  if (!description && !articleNumber) return alert("Vul een artikelnummer of omschrijving in.");
+  const item = upsertVanStockItem({
+    company_id: companyId,
+    companyId: companyId,
+    mechanic_id: mechanicId,
+    article_number: articleNumber,
+    description,
+    brand: String(form.get("brand") || "").trim(),
+    category: String(form.get("category") || "").trim(),
+    location: String(form.get("location") || "").trim(),
+    minimum_stock: Number(form.get("minimum_stock") || 0),
+    maximum_stock: Number(form.get("maximum_stock") || 0),
+    purchase_price: Number(form.get("purchase_price") || warehouseArticle?.purchasePrice || 0),
+    source_article_id: warehouseArticle?.id || "",
+  });
+  if (action === "warehouse_to_van") {
+    item.quantity = Number(item.quantity || 0) + qty;
+    if (warehouseArticle) warehouseArticle.currentStock = Math.max(0, Number(warehouseArticle.currentStock || 0) - qty);
+    recordVanStockMovement(item, qty, "Magazijn", `Bus ${mechanic.name}`, "warehouse_to_van");
+  } else if (action === "van_to_warehouse") {
+    item.quantity = Math.max(0, Number(item.quantity || 0) - qty);
+    if (warehouseArticle) warehouseArticle.currentStock = Number(warehouseArticle.currentStock || 0) + qty;
+    recordVanStockMovement(item, -qty, `Bus ${mechanic.name}`, "Magazijn", "van_to_warehouse");
+  } else {
+    const previous = Number(item.quantity || 0);
+    item.quantity = qty;
+    recordVanStockMovement(item, qty - previous, `Bus ${mechanic.name}`, `Correctie naar ${qty}`, "correction");
+  }
+  item.updated_at = new Date().toISOString();
+  saveState();
+  event.target.reset();
+  render();
+}
+
+function upsertVanStockItem(data) {
+  ensureVanStockState();
+  let item = state.vanStockItems.find((row) => row.mechanic_id === data.mechanic_id && strictRecordCompanyId(row) === data.company_id && ((data.article_number && row.article_number === data.article_number) || (data.source_article_id && row.source_article_id === data.source_article_id)));
+  if (!item) {
+    item = { id: uid("vanitem"), quantity: 0, active: true, created_at: new Date().toISOString(), ...data };
+    state.vanStockItems.push(item);
+  } else {
+    Object.assign(item, data);
+  }
+  return item;
+}
+
+function recordVanStockMovement(item, quantity, fromLocation, toLocation, type, extra = {}) {
+  ensureVanStockState();
+  state.vanStockMovements.push({
+    id: uid("vanmove"),
+    company_id: strictRecordCompanyId(item),
+    companyId: strictRecordCompanyId(item),
+    mechanic_id: item.mechanic_id,
+    item_id: item.id,
+    article_number: item.article_number || "",
+    description: item.description || "",
+    quantity,
+    from_location: fromLocation,
+    to_location: toLocation,
+    type,
+    user_id: currentUser()?.id || "",
+    user_name: currentUser()?.name || "",
+    created_at: new Date().toISOString(),
+    ...extra,
+  });
+}
+
+function updateVanVehicle(vanId, field, value) {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return;
+  const van = byId(state.vanVehicles || [], vanId);
+  if (!van || !isSameCompany(van)) return;
+  van[field] = field === "active" ? Boolean(value) : value;
+  van.updated_at = new Date().toISOString();
+  saveState();
+  render();
+}
+
+function updateVanStockItem(itemId, field, value) {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return;
+  const item = byId(state.vanStockItems || [], itemId);
+  if (!item || !isSameCompany(item)) return;
+  item[field] = ["quantity", "minimum_stock", "maximum_stock", "purchase_price"].includes(field) ? Number(value || 0) : value;
+  item.updated_at = new Date().toISOString();
+  recordVanStockMovement(item, 0, "Correctie", "Bus", `field_${field}`);
+  saveState();
+  render();
+}
+
+function deleteVanStockItem(itemId) {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return;
+  const item = byId(state.vanStockItems || [], itemId);
+  if (!item || !isSameCompany(item)) return;
+  item.deleted = true;
+  item.active = false;
+  item.updated_at = new Date().toISOString();
+  recordVanStockMovement(item, 0, "Bus", "Verwijderd", "deleted");
+  saveState();
+  render();
+}
+
+function renderMechanicVanStock() {
+  if (!isMechanic()) return renderNoOfficeAccess();
+  if (!isCompanyModuleActive("van_stock")) return moduleInactiveMessage();
+  ensureVanStockState();
+  const user = currentUser();
+  const van = ensureVanForMechanic(user);
+  const items = vanItemsForMechanic(user.id, currentCompanyId());
+  const stats = vanStockStats(user.id, currentCompanyId());
+  const canCount = permissionValue(user, "can_count_van_stock") || permissionValue(user, "can_view_own_van_stock") || userRole(user) === ROLES.MECHANIC;
+  const counting = ui.vanInventoryCounting === true;
+  return `<section class="van-stock-page">
+    <section class="office-page-head"><div><h2>Mijn busvoorraad</h2><p>${escapeHtml(van.vehicle || "Eigen bus")} ${van.license_plate ? `- ${escapeHtml(van.license_plate)}` : ""}</p></div>${canCount ? `<button class="btn success" type="button" onclick="startVanInventoryCount()">Inventarisatie starten</button>` : ""}</section>
+    <section class="stats office-kpis">
+      <div class="stat-card"><span>Voorraadwaarde</span><strong>${euro(stats.value)}</strong></div>
+      <div class="stat-card"><span>Artikelen</span><strong>${stats.count}</strong></div>
+      <div class="stat-card"><span>Onder minimum</span><strong>${stats.belowMinimum}</strong></div>
+      <div class="stat-card"><span>Gebruikt deze maand</span><strong>${stats.usedThisMonth}</strong></div>
+    </section>
+    ${counting ? renderVanInventoryCountForm(items) : ""}
+    <section class="panel"><h2>Voorraad</h2>${renderVanStockItemsTable(items, false)}${renderVanStockAdvice(items)}</section>
+  </section>`;
+}
+
+function startVanInventoryCount() {
+  if (!isMechanic()) return;
+  ui.vanInventoryCounting = true;
+  render();
+}
+
+function renderVanInventoryCountForm(items) {
+  return `<section class="panel">
+    <h2>Inventarisatie</h2>
+    <form class="form-grid" onsubmit="saveVanInventoryCount(event)">
+      ${items.map((item) => `<label>${escapeHtml(item.article_number || item.description || "-")}<input name="count_${item.id}" type="number" min="0" step="1" value="${Number(item.quantity || 0)}" /></label>`).join("")}
+      <div class="button-row"><button class="btn secondary" type="button" onclick="ui.vanInventoryCounting=false;render()">Annuleren</button><button class="btn success" type="submit">Inventarisatie opslaan</button></div>
+    </form>
+  </section>`;
+}
+
+function saveVanInventoryCount(event) {
+  event.preventDefault();
+  if (!isMechanic()) return;
+  ensureVanStockState();
+  const user = currentUser();
+  const items = vanItemsForMechanic(user.id, currentCompanyId());
+  const form = new FormData(event.target);
+  const differences = [];
+  items.forEach((item) => {
+    const counted = Math.max(0, Number(form.get(`count_${item.id}`) || 0));
+    const expected = Number(item.quantity || 0);
+    if (counted !== expected || counted < Number(item.minimum_stock || 0)) {
+      differences.push({
+        item_id: item.id,
+        article_number: item.article_number,
+        expected_quantity: expected,
+        counted_quantity: counted,
+        minimum_stock: item.minimum_stock,
+        status: counted < Number(item.minimum_stock || 0) ? "Onder minimum" : "Verschil",
+      });
+    }
+    if (counted !== expected) {
+      item.quantity = counted;
+      item.updated_at = new Date().toISOString();
+      recordVanStockMovement(item, counted - expected, "Inventarisatie", "Busvoorraad", "inventory_count");
+    }
+  });
+  const count = {
+    id: uid("vancount"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    mechanic_id: user.id,
+    mechanic_name: user.name,
+    created_at: new Date().toISOString(),
+    user_id: user.id,
+    differences,
+  };
+  state.vanStockCounts.push(count);
+  ui.vanInventoryCounting = false;
+  saveState();
+  alert(count.differences.length ? `Inventarisatie opgeslagen. ${count.differences.length} verschillen/waarschuwingen gemeld bij kantoor.` : "Inventarisatie opgeslagen. Geen verschillen gemeld.");
+  render();
+}
+
+function exportVanStockCsv() {
+  const rows = (state.vanStockItems || []).filter((item) => isSameCompany(item) && !item.deleted).map((item) => {
+    const mechanic = byId(state.users || [], item.mechanic_id);
+    return {
+      Monteur: mechanic?.name || item.mechanic_id,
+      Artikelnummer: item.article_number || "",
+      Omschrijving: item.description || "",
+      Merk: item.brand || "",
+      Categorie: item.category || "",
+      Locatie: item.location || "",
+      Aantal: item.quantity || 0,
+      Minimum: item.minimum_stock || 0,
+      Maximum: item.maximum_stock || 0,
+      Status: vanStockStatus(item).label,
+      Waarde: vanStockItemValue(item),
+    };
+  });
+  downloadCsv(rows, "busvoorraad.csv");
+}
+
+const baseFindMaterialItemForVanStock = findMaterialItem;
+findMaterialItem = function findMaterialItemWithVanStock(articleId) {
+  const baseItem = baseFindMaterialItemForVanStock(articleId);
+  if (baseItem) return baseItem;
+  ensureVanStockState();
+  const item = byId(state.vanStockItems || [], articleId);
+  if (!item || item.deleted) return null;
+  return {
+    id: item.id,
+    company_id: strictRecordCompanyId(item),
+    companyId: strictRecordCompanyId(item),
+    mechanic_id: item.mechanic_id,
+    description: item.description || item.article_number || "Busvoorraad artikel",
+    supplierArticleNumber: item.article_number || "",
+    currentStock: Number(item.quantity || 0),
+    minimumStock: Number(item.minimum_stock || 0),
+    purchasePrice: Number(item.purchase_price || 0),
+    sourceType: "van_stock",
+    sourceName: "Busvoorraad",
+    kitId: "Busvoorraad",
+    defaultQuantity: Number(item.maximum_stock || item.minimum_stock || 0),
+  };
+};
+
+const baseAllMaterialItemsForProjectForVanStock = allMaterialItemsForProject;
+allMaterialItemsForProject = function allMaterialItemsForProjectWithVanStock(project) {
+  const rows = baseAllMaterialItemsForProjectForVanStock(project);
+  if (!project || !isCompanyModuleActive("van_stock", strictRecordCompanyId(project))) return rows;
+  const mechanicId = project.assignedMechanicId || project.mechanicId || project.assigned_mechanic_id || project.mechanic_id || currentUser()?.id || "";
+  if (!mechanicId) return rows;
+  const vanItems = vanItemsForMechanic(mechanicId, strictRecordCompanyId(project))
+    .filter((item) => item.active !== false && Number(item.quantity || 0) > 0)
+    .map((item) => findMaterialItem(item.id))
+    .filter(Boolean);
+  return [...vanItems, ...rows];
+};
+
+const baseProcessProjectInventoryForVanStock = processProjectInventory;
+processProjectInventory = function processProjectInventoryWithVanStock(project) {
+  baseProcessProjectInventoryForVanStock(project);
+  if (!project || !isCompanyModuleActive("van_stock", strictRecordCompanyId(project))) return;
+  const workOrder = ensureWorkOrder(project);
+  if (workOrder.materialsUsed !== "ja") return;
+  materialUsages(project.id)
+    .filter((usage) => usage.sourceType === "van_stock" && usage.usedQuantity > 0)
+    .forEach((usage) => {
+      const item = byId(state.vanStockItems || [], usage.articleId);
+      if (!item || !isSameCompany(item)) return;
+      const oldQuantity = Number(item.quantity || 0);
+      item.quantity = Math.max(0, oldQuantity - Number(usage.usedQuantity || 0));
+      item.updated_at = new Date().toISOString();
+      usage.kitId = "Busvoorraad";
+      usage.sourceName = "Busvoorraad";
+      usage.sourceType = "van_stock";
+      usage.purchasePriceAtTime = Number(item.purchase_price || 0);
+      usage.totalPrice = usage.purchasePriceAtTime * Number(usage.usedQuantity || 0);
+      usage.orderStatus = item.quantity < Number(item.minimum_stock || 0) ? "Te bestellen" : "Niet besteld";
+      usage.customer_id = project.customer_id || "";
+      usage.customer_name = project.customer || "";
+      usage.workorder_id = project.id;
+      recordVanStockMovement(item, -Number(usage.usedQuantity || 0), "Busvoorraad", `Werkbon ${workorderNumber(project)}`, "workorder_usage", {
+        project_id: project.id,
+        workorder_id: project.id,
+        customer_id: project.customer_id || "",
+        customer_name: project.customer || "",
+      });
+    });
+};
+
 function renderOfficeDashboard() {
   const stats = officeDashboardStats();
   const todayRows = companyScoped(state.planningEvents || [])
@@ -14271,7 +20747,58 @@ function currentRoute() {
   return "start";
 }
 
+function scheduleRender(delay = 300) {
+  clearTimeout(renderDebounceTimer);
+  renderDebounceTimer = setTimeout(() => {
+    renderDebounceTimer = null;
+    render();
+  }, delay);
+}
+
+function captureFocusedControl(root) {
+  const element = document.activeElement;
+  if (!element || !root?.contains(element)) return null;
+  const tagName = String(element.tagName || "").toLowerCase();
+  if (!["input", "textarea"].includes(tagName)) return null;
+  const type = String(element.getAttribute("type") || "").toLowerCase();
+  if (tagName === "input" && ["checkbox", "radio", "file", "button", "submit", "color", "date", "datetime-local"].includes(type)) return null;
+  return {
+    tagName,
+    type,
+    name: element.getAttribute("name") || "",
+    placeholder: element.getAttribute("placeholder") || "",
+    value: element.value,
+    selectionStart: element.selectionStart,
+    selectionEnd: element.selectionEnd,
+  };
+}
+
+function restoreFocusedControl(root, snapshot) {
+  if (!snapshot) return;
+  const controls = Array.from(root.querySelectorAll("input, textarea"));
+  const candidate = controls.find((element) =>
+    String(element.tagName || "").toLowerCase() === snapshot.tagName &&
+    String(element.getAttribute("type") || "").toLowerCase() === snapshot.type &&
+    (element.getAttribute("name") || "") === snapshot.name &&
+    (element.getAttribute("placeholder") || "") === snapshot.placeholder &&
+    element.value === snapshot.value,
+  ) || controls.find((element) =>
+    String(element.tagName || "").toLowerCase() === snapshot.tagName &&
+    (element.getAttribute("placeholder") || "") === snapshot.placeholder &&
+    element.value === snapshot.value,
+  );
+  if (!candidate) return;
+  candidate.focus({ preventScroll: true });
+  if (typeof snapshot.selectionStart === "number" && typeof candidate.setSelectionRange === "function") {
+    const start = Math.min(snapshot.selectionStart, candidate.value.length);
+    const end = Math.min(snapshot.selectionEnd ?? snapshot.selectionStart, candidate.value.length);
+    candidate.setSelectionRange(start, end);
+  }
+}
+
 function render() {
+  clearTimeout(renderDebounceTimer);
+  renderDebounceTimer = null;
   ensureGarageBoxArticles();
   let route = currentRoute();
   if (!currentUser() && !route.startsWith("login")) route = "login";
@@ -14293,6 +20820,7 @@ function render() {
       ? `--soft:${company.primary_color || company.branding?.primaryColor || "#08172e"};--panel:${company.primary_color || company.branding?.primaryColor || "#0e213f"};--brand:${company.secondary_color || company.branding?.secondaryColor || "#d6a73c"};--brand-hover:${company.secondary_color || company.branding?.secondaryColor || "#e0b348"}`
       : "",
   );
+  const focusedControl = captureFocusedControl(appEl);
   appEl.innerHTML = `
     <div class="topbar" ${themeStyle}>
       <div class="topbar-inner">
@@ -14317,6 +20845,10 @@ function render() {
     ${user ? renderBottomNav(route) : ""}
     <section class="print-report" id="print-report"></section>
   `;
+  restoreFocusedControl(appEl, focusedControl);
+  if (route.startsWith("admin/customers") || route.startsWith("office/customers") || route.startsWith("manage/customers")) {
+    setTimeout(initCustomerLeafletMap, 0);
+  }
 }
 
 window.addEventListener("hashchange", render);
