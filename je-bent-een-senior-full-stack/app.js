@@ -77,6 +77,10 @@ const SUPABASE_ENTITY_TABLES = [
   { table: "appliances", collection: "appliances", companyScoped: true, prune: false },
   { table: "quotes", collection: "quotes", companyScoped: true, prune: false },
   { table: "invoices", collection: "invoices", companyScoped: true, prune: false },
+  { table: "van_vehicles", collection: "vanVehicles", companyScoped: true, prune: false },
+  { table: "van_stock_items", collection: "vanStockItems", companyScoped: true, prune: false },
+  { table: "van_stock_movements", collection: "vanStockMovements", companyScoped: true, prune: false },
+  { table: "van_stock_counts", collection: "vanStockCounts", companyScoped: true, prune: false },
   { table: "company_settings", collection: "companySettings", virtual: true, companyScoped: true, prune: false },
   { table: "modules", collection: "companyModules", virtual: true, companyScoped: true, prune: false },
   { table: "permissions", collection: "userPermissions", virtual: true, companyScoped: false, prune: false },
@@ -209,7 +213,7 @@ const MONTEUR_DASHBOARD_ITEMS = [
   {
     key: "van-stock",
     route: "busvoorraad",
-    title: "Busvoorraad",
+    title: "Mijn voorraad",
     description: "Bekijk voorraad, besteladvies en inventarisatie.",
     icon: "B",
   },
@@ -229,7 +233,7 @@ const MONTEUR_DASHBOARD_BUTTON_PERMISSIONS = [
   ["dashboard_completed_projects", "completed-projects", "Afgeronde projecten"],
   ["dashboard_appliances", "appliances", "Toestellendatabase"],
   ["dashboard_customers", "customers", "Klanten"],
-  ["dashboard_van_stock", "van-stock", "Busvoorraad"],
+  ["dashboard_van_stock", "van-stock", "Mijn voorraad"],
   ["dashboard_notifications", "notifications", "Meldingen"],
   ["dashboard_call_customer", "call-customer", "Nieuwe klant uit telefoongesprek"],
   ["dashboard_whatsapp", "whatsapp", "WhatsApp"],
@@ -11503,6 +11507,7 @@ function pageTitle(route) {
   if (route.startsWith("call-customer")) return ["Nieuwe klant uit telefoongesprek", "Maak snel een klant, notitie, afspraak of werkbon aan."];
   if (route.startsWith("whatsapp")) return ["WhatsApp", "Klantberichten lezen en beantwoorden."];
   if (route.startsWith("notifications")) return ["Meldingen", "Nieuwe werkbonnen, planningwijzigingen en spoedmeldingen."];
+  if (route.startsWith("busvoorraad")) return [isMechanic() ? "Mijn voorraad" : "Busvoorraad", "Materialen, aantallen en locaties per servicebus."];
   if (route.startsWith("maintenance-workorder") || route.startsWith("new") || route.startsWith("admin/new-workorder")) return ["Nieuwe werkbon", "Maak binnen 1 minuut een werkbon aan."];
   if (route.startsWith("start")) return ["Start", "Monteursomgeving voor projecten en kofferregistratie."];
   if (route.startsWith("active")) return ["Lopende projecten", "Open projecten die nog ingevuld worden."];
@@ -18042,7 +18047,7 @@ function defaultOfficeNavItems() {
 function defaultMenuOrder(roleKey = "company_admin") {
   const platformDefault = state.platformSettings?.default_menu_order?.[roleKey];
   if (Array.isArray(platformDefault) && platformDefault.length) return platformDefault.slice();
-  if (roleKey === "mechanic") return ["Planning", "Werkbonnen", "Klanten", "Busvoorraad", "Toestellendatabase"];
+  if (roleKey === "mechanic") return ["Planning", "Werkbonnen", "Klanten", "Mijn voorraad", "Toestellendatabase"];
   return defaultOfficeNavItems().map(([label]) => label);
 }
 
@@ -18245,8 +18250,8 @@ function officeSectionToTab(section = "") {
     inventory: "Voorraad",
     warehouse: "Magazijn",
     "garage-box": "Magazijn",
-    "van-stock": "Busvoorraad",
-    busvoorraad: "Busvoorraad",
+    "van-stock": isMechanic() ? "Mijn voorraad" : "Busvoorraad",
+    busvoorraad: isMechanic() ? "Mijn voorraad" : "Busvoorraad",
     kits: "Koffers",
     orders: "Bestellen",
     wasco: "Wasco",
@@ -22080,8 +22085,8 @@ function ensureVanStockState() {
 function vanStockStatus(item) {
   const qty = Number(item.quantity ?? 0);
   const min = Number(item.minimum_stock ?? 0);
-  if (qty <= 0 || qty < min) return { label: "Bestellen", className: "danger", icon: "Rood" };
-  if (qty === min) return { label: "Laag", className: "warn", icon: "Oranje" };
+  if (qty <= 0) return { label: "Bestellen", className: "danger", icon: "Rood" };
+  if (min > 0 && qty <= min) return { label: "Laag", className: "warn", icon: "Oranje" };
   return { label: "Op voorraad", className: "ok", icon: "Groen" };
 }
 
@@ -22140,6 +22145,80 @@ function renderVanStockStatusBadge(item) {
   return `<span class="badge ${status.className}">${status.label}</span>`;
 }
 
+function vanStockSearchValue() {
+  return String(ui.vanStockSearch || "").trim().toLowerCase();
+}
+
+function vanStockFilterValue(field) {
+  ui.vanStockFilters = ui.vanStockFilters || {};
+  return ui.vanStockFilters[field] || "";
+}
+
+function setVanStockSearch(value) {
+  ui.vanStockSearch = value || "";
+  scheduleRender();
+}
+
+function setVanStockFilter(field, value) {
+  ui.vanStockFilters = ui.vanStockFilters || {};
+  ui.vanStockFilters[field] = value || "";
+  scheduleRender();
+}
+
+function vanStockItemHaystack(item) {
+  return [
+    item.description,
+    item.article_number,
+    item.supplierArticleNumber,
+    item.brand,
+    item.category,
+    item.location,
+    item.barcode,
+    item.qr_code,
+  ].join(" ").toLowerCase();
+}
+
+function vanStockFilteredItems(items) {
+  const search = vanStockSearchValue();
+  const status = vanStockFilterValue("status");
+  const category = vanStockFilterValue("category").toLowerCase();
+  const brand = vanStockFilterValue("brand").toLowerCase();
+  const location = vanStockFilterValue("location").toLowerCase();
+  return items.filter((item) => {
+    const itemStatus = vanStockStatus(item).label;
+    const matchesSearch = !search || vanStockItemHaystack(item).includes(search);
+    const matchesStatus = !status || itemStatus === status;
+    const matchesCategory = !category || String(item.category || "").toLowerCase().includes(category);
+    const matchesBrand = !brand || String(item.brand || "").toLowerCase().includes(brand);
+    const matchesLocation = !location || String(item.location || "").toLowerCase().includes(location);
+    return matchesSearch && matchesStatus && matchesCategory && matchesBrand && matchesLocation;
+  });
+}
+
+function vanStockUniqueValues(items, field) {
+  return [...new Set(items.map((item) => String(item[field] || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function renderVanStockSearchFilters(items) {
+  const categories = vanStockUniqueValues(items, "category");
+  const brands = vanStockUniqueValues(items, "brand");
+  const locations = vanStockUniqueValues(items, "location");
+  return `<section class="panel van-stock-search-panel">
+    <label>Zoeken
+      <input value="${escapeAttr(ui.vanStockSearch || "")}" placeholder="Zoek artikel, artikelnummer, merk of locatie..." oninput="setVanStockSearch(this.value)" />
+    </label>
+    <div class="form-grid">
+      <label>Status <select onchange="setVanStockFilter('status', this.value)">
+        <option value="" ${!vanStockFilterValue("status") ? "selected" : ""}>Alle</option>
+        ${["Op voorraad", "Laag", "Bestellen"].map((value) => `<option value="${value}" ${vanStockFilterValue("status") === value ? "selected" : ""}>${value === "Bestellen" ? "Niet op voorraad / bestellen" : value}</option>`).join("")}
+      </select></label>
+      <label>Categorie <select onchange="setVanStockFilter('category', this.value)"><option value="">Alle</option>${categories.map((value) => `<option value="${escapeAttr(value)}" ${vanStockFilterValue("category") === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+      <label>Merk <select onchange="setVanStockFilter('brand', this.value)"><option value="">Alle</option>${brands.map((value) => `<option value="${escapeAttr(value)}" ${vanStockFilterValue("brand") === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+      <label>Locatie <select onchange="setVanStockFilter('location', this.value)"><option value="">Alle</option>${locations.map((value) => `<option value="${escapeAttr(value)}" ${vanStockFilterValue("location") === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+    </div>
+  </section>`;
+}
+
 function renderVanStockModule() {
   if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return renderNoOfficeAccess();
   if (!isCompanyModuleActive("van_stock")) return moduleInactiveMessage();
@@ -22176,7 +22255,7 @@ function renderVanStockTransferPanel(mechanics) {
       <label>Omschrijving <input name="description" placeholder="Omschrijving" /></label>
       <label>Merk <input name="brand" placeholder="Merk" /></label>
       <label>Categorie <input name="category" placeholder="Koppelingen, Appendages, Kabels..." /></label>
-      <label>Locatie in bus <input name="location" placeholder="Bak 1 / lade links" /></label>
+      <label>Buslocatie <input name="location" placeholder="Bak 3 links / lade boven / koffer CV" /></label>
       <label>Aantal <input name="quantity" type="number" min="0" step="1" value="1" required /></label>
       <label>Minimum voorraad <input name="minimum_stock" type="number" min="0" step="1" value="1" /></label>
       <label>Maximum voorraad <input name="maximum_stock" type="number" min="0" step="1" value="10" /></label>
@@ -22212,20 +22291,47 @@ function renderVanStockMechanicCard(user) {
   </section>`;
 }
 
-function renderVanStockItemsTable(items, editable = false) {
-  return `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Artikelnummer</th><th>Omschrijving</th><th>Merk</th><th>Categorie</th><th>Locatie</th><th>Aanwezig</th><th>Min</th><th>Max</th><th>Waarde</th>${editable ? "<th>Actie</th>" : ""}</tr></thead><tbody>${items.map((item) => `<tr>
+function renderVanStockItemsTable(items, editable = false, options = {}) {
+  const rows = options.filtered ? items : items;
+  return `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Artikelnummer</th><th>Omschrijving</th><th>Merk</th><th>Categorie</th><th>Buslocatie</th><th>Aanwezig</th><th>Min</th><th>Max</th><th>Waarde</th>${editable ? "<th>Actie</th>" : ""}</tr></thead><tbody>${rows.map((item) => `<tr>
     <td>${renderVanStockStatusBadge(item)}</td>
     <td>${escapeHtml(item.article_number || "-")}</td>
     <td>${escapeHtml(item.description || "-")}</td>
     <td>${escapeHtml(item.brand || "-")}</td>
     <td>${escapeHtml(item.category || "-")}</td>
-    <td>${escapeHtml(item.location || "-")}</td>
+    <td>${editable ? `<input value="${escapeAttr(item.location || "")}" onchange="updateVanStockItem('${item.id}', 'location', this.value)" placeholder="Bak 3 links" />` : escapeHtml(item.location || "-")}</td>
     <td>${editable ? `<input type="number" min="0" value="${Number(item.quantity || 0)}" onchange="updateVanStockItem('${item.id}', 'quantity', this.value)" />` : Number(item.quantity || 0)}</td>
     <td>${editable ? `<input type="number" min="0" value="${Number(item.minimum_stock || 0)}" onchange="updateVanStockItem('${item.id}', 'minimum_stock', this.value)" />` : Number(item.minimum_stock || 0)}</td>
     <td>${editable ? `<input type="number" min="0" value="${Number(item.maximum_stock || 0)}" onchange="updateVanStockItem('${item.id}', 'maximum_stock', this.value)" />` : Number(item.maximum_stock || 0)}</td>
     <td>${euro(vanStockItemValue(item))}</td>
     ${editable ? `<td><button class="btn secondary" type="button" onclick="deleteVanStockItem('${item.id}')">Verwijderen</button></td>` : ""}
   </tr>`).join("") || `<tr><td colspan="${editable ? 11 : 10}">Geen busvoorraad geregistreerd.</td></tr>`}</tbody></table></div>`;
+}
+
+function renderMechanicVanStockCards(items) {
+  return `<section class="van-stock-mobile-list">${items.length ? items.map((item) => {
+    const status = vanStockStatus(item);
+    return `<article class="van-stock-item-card ${status.className}">
+      <div class="article-head">
+        <div>
+          <h3>${escapeHtml(item.article_number || "-")}</h3>
+          <p>${escapeHtml(item.description || "Geen omschrijving")}</p>
+        </div>
+        ${renderVanStockStatusBadge(item)}
+      </div>
+      <div class="customer-card-grid">
+        <div><span>Merk</span><strong>${escapeHtml(item.brand || "-")}</strong></div>
+        <div><span>Categorie</span><strong>${escapeHtml(item.category || "-")}</strong></div>
+        <div><span>Aantal</span><strong>${Number(item.quantity || 0)}</strong></div>
+        <div><span>Minimum</span><strong>${Number(item.minimum_stock || 0)}</strong></div>
+        <div><span>Buslocatie</span><strong>${escapeHtml(item.location || "-")}</strong></div>
+        <div><span>Status</span><strong>${escapeHtml(status.label === "Bestellen" ? "Niet op voorraad / bestellen" : status.label)}</strong></div>
+      </div>
+      <div class="button-row">
+        <button class="btn secondary" type="button" onclick="reportLowVanStock('${item.id}')">Lage voorraad melden</button>
+      </div>
+    </article>`;
+  }).join("") : `<section class="panel empty">Geen artikelen gevonden.</section>`}</section>`;
 }
 
 function renderVanStockAdvice(items) {
@@ -22364,6 +22470,31 @@ function deleteVanStockItem(itemId) {
   render();
 }
 
+function reportLowVanStock(itemId) {
+  if (!isMechanic()) return;
+  const item = byId(state.vanStockItems || [], itemId);
+  if (!item || item.mechanic_id !== currentUser()?.id || strictRecordCompanyId(item) !== currentCompanyId()) return;
+  state.notifications = state.notifications || [];
+  const now = new Date().toISOString();
+  state.notifications.push({
+    id: uid("notification"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    user_id: "",
+    title: "Lage busvoorraad gemeld",
+    message: `${currentUser()?.name || "Monteur"} meldt lage voorraad: ${item.article_number || item.description || "artikel"}`,
+    type: "van_stock_low",
+    priority: vanStockStatus(item).className === "danger" ? "hoog" : "normaal",
+    related_item_id: item.id,
+    is_read: false,
+    created_at: now,
+  });
+  recordVanStockMovement(item, 0, "Bus", "Kantoor melding", "low_stock_reported");
+  saveState();
+  alert("Lage voorraad is gemeld bij kantoor.");
+  render();
+}
+
 function renderMechanicVanStock() {
   if (!isMechanic()) return renderNoOfficeAccess();
   if (!isCompanyModuleActive("van_stock")) return moduleInactiveMessage();
@@ -22371,19 +22502,21 @@ function renderMechanicVanStock() {
   const user = currentUser();
   const van = ensureVanForMechanic(user);
   const items = vanItemsForMechanic(user.id, currentCompanyId());
+  const filteredItems = vanStockFilteredItems(items);
   const stats = vanStockStats(user.id, currentCompanyId());
   const canCount = permissionValue(user, "can_count_van_stock") || permissionValue(user, "can_view_own_van_stock") || userRole(user) === ROLES.MECHANIC;
   const counting = ui.vanInventoryCounting === true;
   return `<section class="van-stock-page">
-    <section class="office-page-head"><div><h2>Mijn busvoorraad</h2><p>${escapeHtml(van.vehicle || "Eigen bus")} ${van.license_plate ? `- ${escapeHtml(van.license_plate)}` : ""}</p></div>${canCount ? `<button class="btn success" type="button" onclick="startVanInventoryCount()">Inventarisatie starten</button>` : ""}</section>
+    <section class="office-page-head"><div><h2>Mijn voorraad</h2><p>${escapeHtml(van.vehicle || "Eigen bus")} ${van.license_plate ? `- ${escapeHtml(van.license_plate)}` : ""}</p></div>${canCount ? `<button class="btn success" type="button" onclick="startVanInventoryCount()">Inventarisatie starten</button>` : ""}</section>
     <section class="stats office-kpis">
       <div class="stat-card"><span>Voorraadwaarde</span><strong>${euro(stats.value)}</strong></div>
       <div class="stat-card"><span>Artikelen</span><strong>${stats.count}</strong></div>
       <div class="stat-card"><span>Onder minimum</span><strong>${stats.belowMinimum}</strong></div>
       <div class="stat-card"><span>Gebruikt deze maand</span><strong>${stats.usedThisMonth}</strong></div>
     </section>
+    ${renderVanStockSearchFilters(items)}
     ${counting ? renderVanInventoryCountForm(items) : ""}
-    <section class="panel"><h2>Voorraad</h2>${renderVanStockItemsTable(items, false)}${renderVanStockAdvice(items)}</section>
+    <section class="panel"><div class="article-head"><div><h2>Voorraad</h2><p>${filteredItems.length}/${items.length} artikelen zichtbaar. Zoek op artikel, artikelnummer, merk, categorie, buslocatie of barcode/QR-code.</p></div></div>${renderMechanicVanStockCards(filteredItems)}${renderVanStockItemsTable(filteredItems, false, { filtered: true })}${renderVanStockAdvice(filteredItems)}</section>
   </section>`;
 }
 

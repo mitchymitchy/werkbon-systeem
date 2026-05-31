@@ -35,4 +35,5 @@
 - Klant aanmaken controleert nu op dubbele klanten via naam, e-mail, telefoon en postcode/huisnummer, met opties voor bestaande klant gebruiken, toch nieuw aanmaken of samenvoegen inclusief auditlog.
 - Tijdelijke `DEVELOPMENT_MODE` toegevoegd: wanneer actief zijn alle permissies en modules vrijgegeven en toont de app bovenaan een testmoduswaarschuwing.
 - Platform Admin kan per bedrijf met een snelle actie alle rechten, dashboardtegels en modules activeren of terugzetten naar standaard, inclusief bevestiging en auditlog.
+- Monteur `Busvoorraad` is hernoemd naar `Mijn voorraad` met zoekbalk, filters, mobiele voorraadkaarten, buslocatie, lage-voorraadmelding en Supabase-tabellen voor busvoorraad.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.
