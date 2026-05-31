@@ -34,4 +34,5 @@
 - Company Admin heeft onder Instellingen -> Monteur startscherm nu een beheerpagina voor standaard starttegels en tegelrechten per monteur, opgeslagen via Supabase.
 - Klant aanmaken controleert nu op dubbele klanten via naam, e-mail, telefoon en postcode/huisnummer, met opties voor bestaande klant gebruiken, toch nieuw aanmaken of samenvoegen inclusief auditlog.
 - Tijdelijke `DEVELOPMENT_MODE` toegevoegd: wanneer actief zijn alle permissies en modules vrijgegeven en toont de app bovenaan een testmoduswaarschuwing.
+- Platform Admin kan per bedrijf met een snelle actie alle rechten, dashboardtegels en modules activeren of terugzetten naar standaard, inclusief bevestiging en auditlog.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.

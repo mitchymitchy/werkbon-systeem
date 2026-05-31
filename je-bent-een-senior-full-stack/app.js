@@ -597,6 +597,7 @@ let ui = {
   profitFrom: "",
   profitTo: "",
   platformTab: "Overzicht",
+  pendingCompanyRightsAction: null,
   serverSave: {
     pending: false,
     action: "",
@@ -16926,6 +16927,153 @@ function setCompanyModule(companyId, moduleKey, field, value) {
   render();
 }
 
+function companyRightsActionUsers(companyId) {
+  return (state.users || [])
+    .filter((user) => !user.deleted)
+    .filter((user) => strictRecordCompanyId(user) === companyId)
+    .filter((user) => userRole(user) !== ROLES.PLATFORM_ADMIN);
+}
+
+function allCompanyRightFields() {
+  return [
+    ...USER_PERMISSION_FIELDS,
+    ...allUserPermissionFields(),
+    ...Object.keys(USER_PERMISSION_ALIASES || {}),
+    ...Object.values(USER_PERMISSION_ALIASES || {}),
+  ].filter((field, index, list) => field && list.indexOf(field) === index);
+}
+
+function requestCompanyRightsAction(companyId, action) {
+  if (!isPlatformSuperAdmin()) return alert("Geen toegang tot platformbeheer.");
+  const company = byId(state.companies || [], companyId);
+  if (!company) return;
+  ui.pendingCompanyRightsAction = { companyId, action };
+  render();
+}
+
+function cancelCompanyRightsAction() {
+  ui.pendingCompanyRightsAction = null;
+  render();
+}
+
+function setCompanyAllRights(companyId, enabled) {
+  const company = byId(state.companies || [], companyId);
+  if (!company) return;
+  ensureCompanyModulesEnabled(company);
+  const now = new Date().toISOString();
+  moduleCatalog().forEach((module) => {
+    company.modules_enabled[module.key] = Boolean(enabled);
+    company.module_meta = company.module_meta || {};
+    company.module_meta[module.key] = {
+      ...(company.module_meta[module.key] || {}),
+      active: Boolean(enabled),
+      last_changed_at: now,
+      lastChangedAt: now,
+    };
+  });
+  mechanicStartTileDefaults(company);
+  Object.keys(company.settings.mechanic_start_tiles_default || {}).forEach((field) => {
+    company.settings.mechanic_start_tiles_default[field] = Boolean(enabled);
+  });
+  companyRightsActionUsers(companyId).forEach((user) => {
+    allCompanyRightFields().forEach((field) => setUserPermissionValue(user, field, Boolean(enabled)));
+    user.active = true;
+    user.updated_at = now;
+    user.updatedAt = now;
+  });
+  company.updated_at = now;
+  company.updatedAt = now;
+}
+
+function resetCompanyRightsToDefaults(companyId) {
+  const company = byId(state.companies || [], companyId);
+  if (!company) return;
+  const now = new Date().toISOString();
+  ensureCompanyModulesEnabled(company);
+  moduleCatalog().forEach((module) => {
+    const enabled = packageDefaultEnabled(company.subscription_package, module.key);
+    company.modules_enabled[module.key] = enabled;
+    company.module_meta = company.module_meta || {};
+    company.module_meta[module.key] = {
+      ...(company.module_meta[module.key] || {}),
+      active: enabled,
+      last_changed_at: now,
+      lastChangedAt: now,
+    };
+  });
+  const defaults = mechanicStartTileDefaults(company);
+  Object.keys(defaults).forEach((field) => {
+    defaults[field] = true;
+  });
+  companyRightsActionUsers(companyId).forEach((user) => {
+    allCompanyRightFields().forEach((field) => setUserPermissionValue(user, field, userRole(user) === ROLES.COMPANY_ADMIN));
+    if (userRole(user) === ROLES.MECHANIC) {
+      setUserPermissionValue(user, "can_view_workorders", true);
+      setUserPermissionValue(user, "can_open_workorders", true);
+      setUserPermissionValue(user, "can_close_workorders", true);
+      MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.forEach(([field]) => setUserPermissionValue(user, field, true));
+    }
+    user.updated_at = now;
+    user.updatedAt = now;
+  });
+  company.updated_at = now;
+  company.updatedAt = now;
+}
+
+async function confirmCompanyRightsAction() {
+  const pending = ui.pendingCompanyRightsAction;
+  if (!pending || !isPlatformSuperAdmin()) return;
+  const company = byId(state.companies || [], pending.companyId);
+  if (!company) return cancelCompanyRightsAction();
+  const activate = pending.action === "allow-all";
+  setServerSavePending(`company-rights:${company.id}`);
+  try {
+    if (activate) setCompanyAllRights(company.id, true);
+    else resetCompanyRightsToDefaults(company.id);
+    logPlatformAction(activate ? "Alle rechten geactiveerd" : "Rechten gereset naar standaard", company.id, company.name);
+    ui.pendingCompanyRightsAction = null;
+    await persistStateToSupabaseEntities(state);
+    await refreshStateFromSupabaseEntities();
+    state.databaseSyncError = "";
+    setServerSaveSuccess(activate ? `Alle rechten voor ${company.name} zijn geactiveerd.` : `Rechten voor ${company.name} zijn teruggezet naar standaard.`);
+  } catch (error) {
+    console.error("Bedrijfsrechten opslaan mislukt", error);
+    state.databaseSyncError = error.message || "Rechten konden niet worden opgeslagen op de server.";
+    setServerSaveError("Rechten konden niet worden opgeslagen op de server.");
+  }
+}
+
+function renderCompanyRightsActionModal() {
+  const pending = ui.pendingCompanyRightsAction;
+  if (!pending) return "";
+  const company = byId(state.companies || [], pending.companyId);
+  if (!company) return "";
+  const activate = pending.action === "allow-all";
+  return `<section class="modal-backdrop"><div class="panel confirm-modal">
+    <h2>${activate ? "LET OP" : "Rechten resetten naar standaard"}</h2>
+    ${activate ? `<p>U staat op het punt alle rechten voor alle gebruikers binnen dit bedrijf te activeren.</p>
+    <p>Dit omvat:</p>
+    <ul>
+      <li>Planning</li>
+      <li>Werkbonnen</li>
+      <li>Klanten</li>
+      <li>Offertes</li>
+      <li>Facturen</li>
+      <li>Voorraad</li>
+      <li>Magazijn</li>
+      <li>Busvoorraad</li>
+      <li>Toestellendatabase</li>
+      <li>WhatsApp</li>
+      <li>Rapportages</li>
+      <li>Modules</li>
+    </ul>` : `<p>Alle gebruikersrechten en modules voor ${escapeHtml(company.name || "dit bedrijf")} worden teruggezet naar de standaard bedrijfsinstellingen op basis van het pakket.</p>`}
+    <div class="button-row">
+      <button class="btn secondary" type="button" onclick="cancelCompanyRightsAction()">Annuleren</button>
+      <button class="btn ${activate ? "success" : "warn"}" type="button" onclick="confirmCompanyRightsAction()">${activate ? "Rechten activeren" : "Resetten naar standaard"}</button>
+    </div>
+  </div></section>`;
+}
+
 function renderPlatformModules() {
   const companies = platformCompanies();
   return `<section class="panel"><div class="article-head"><div><h2>Modules per bedrijf</h2><p>Schakel SaaS-modules per bedrijf aan of uit.</p></div></div>
@@ -19416,8 +19564,12 @@ function renderPlatformCompanyDetails(company, editable) {
     </section>
     <section class="company-detail-section">
       <h3>Rechten</h3>
-      <p class="muted">Rechten worden per gebruiker beheerd in Platform Admin > Rechten.</p>
-      <div class="button-row"><button class="btn secondary" type="button" onclick="setPlatformTab('Rechten')">Rechten beheren</button></div>
+      <p class="muted">Rechten worden per gebruiker beheerd in Platform Admin > Rechten. Gebruik snelle acties alleen voor ontwikkeling, support of testinrichting.</p>
+      <div class="button-row">
+        <button class="btn success" type="button" onclick="requestCompanyRightsAction('${company.id}', 'allow-all')">Alle rechten toestaan</button>
+        <button class="btn secondary" type="button" onclick="requestCompanyRightsAction('${company.id}', 'reset-defaults')">Rechten resetten naar standaard</button>
+        <button class="btn secondary" type="button" onclick="setPlatformTab('Rechten')">Rechten beheren</button>
+      </div>
     </section>
     ${renderPlatformCompanyAuditCompact(company)}
     <section class="company-detail-section">
@@ -19477,6 +19629,7 @@ function renderPlatformCompaniesTable(editable) {
         </article>`;
       }).join("") : `<section class="panel empty">Geen bedrijven gevonden.</section>`}
     </section>
+    ${renderCompanyRightsActionModal()}
   </section>`;
 }
 
@@ -21715,6 +21868,14 @@ function renderPlatformRightsCompany(company) {
       <span class="muted">${company.active === false || company.blocked ? "Inactief/geblokkeerd" : "Actief"}</span>
     </button>
     ${isOpen ? `<div class="rights-company-users">
+      <section class="user-permission-section">
+        <h4>Bedrijfsrechten</h4>
+        <p class="muted">Snelle acties voor alle gebruikers binnen ${escapeHtml(company.name || "dit bedrijf")}.</p>
+        <div class="button-row">
+          <button class="btn success" type="button" onclick="requestCompanyRightsAction('${company.id}', 'allow-all')">Alle rechten toestaan</button>
+          <button class="btn secondary" type="button" onclick="requestCompanyRightsAction('${company.id}', 'reset-defaults')">Rechten resetten naar standaard</button>
+        </div>
+      </section>
       ${users.length ? users.map(renderPlatformRightsUser).join("") : `<div class="empty">Geen gebruikers onder dit bedrijf.</div>`}
     </div>` : ""}
   </article>`;
@@ -21725,6 +21886,7 @@ function renderPlatformPermissions() {
   const companies = platformCompanies()
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   const users = platformRightsVisibleUsers();
+  const selectedCompany = platformRightsCompanyFilter() === "ALL" ? null : byId(state.companies || [], platformRightsCompanyFilter());
   const pendingDeleteUser = ui.pendingDeleteUserId ? byId(state.users || [], ui.pendingDeleteUserId) : null;
   return `<section class="platform-rights-page">
     <section class="panel rights-intro">
@@ -21750,6 +21912,14 @@ function renderPlatformPermissions() {
         <button class="btn secondary" type="button" onclick="setAllPlatformRightsUsersOpen(true)">Alles uitklappen</button>
         <button class="btn ghost" type="button" onclick="setAllPlatformRightsUsersOpen(false)">Alles inklappen</button>
       </div>
+      ${selectedCompany ? `<section class="user-permission-section" style="margin-top:14px">
+        <h4>Bedrijfsrechten voor ${escapeHtml(selectedCompany.name || "-")}</h4>
+        <p class="muted">Activeer of reset rechten voor alle gebruikers binnen dit ene bedrijf. Andere bedrijven blijven ongewijzigd.</p>
+        <div class="button-row">
+          <button class="btn success" type="button" onclick="requestCompanyRightsAction('${selectedCompany.id}', 'allow-all')">Alle rechten toestaan</button>
+          <button class="btn secondary" type="button" onclick="requestCompanyRightsAction('${selectedCompany.id}', 'reset-defaults')">Rechten resetten naar standaard</button>
+        </div>
+      </section>` : `<p class="muted" style="margin-top:12px">Kies een bedrijf om de snelle actie Alle rechten toestaan of Rechten resetten naar standaard te gebruiken.</p>`}
     </section>
     <section class="rights-company-list">
       ${users.length ? users.map(renderPlatformRightsUser).join("") : `<section class="panel empty">Geen gebruikers gevonden.</section>`}
@@ -21758,6 +21928,7 @@ function renderPlatformPermissions() {
       ${renderNewUserForm()}
     </section>
     ${pendingDeleteUser && userRole(pendingDeleteUser) !== ROLES.PLATFORM_ADMIN ? `<section class="modal-backdrop"><div class="panel confirm-modal"><h2>Gebruiker verwijderen</h2><p>Weet je zeker dat je deze gebruiker wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.</p><div class="button-row"><button class="btn secondary" type="button" onclick="cancelDeleteUser()">Annuleren</button><button class="btn danger" type="button" onclick="confirmDeleteUser()">Definitief verwijderen</button></div></div></section>` : ""}
+    ${renderCompanyRightsActionModal()}
   </section>`;
 }
 
