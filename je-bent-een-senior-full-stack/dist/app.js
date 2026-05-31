@@ -2,6 +2,7 @@ const STORAGE_KEY = "werkbonsysteem-saas-v14";
 const SESSION_STORAGE_KEY = `${STORAGE_KEY}:session`;
 const UI_STORAGE_KEY = `${STORAGE_KEY}:ui`;
 const DATABASE_CONFIG_STORAGE_KEY = `${STORAGE_KEY}:database-config`;
+const DEVELOPMENT_MODE = window.DEVELOPMENT_MODE ?? true;
 const CENTRAL_DATABASE_CONFIG = {
   provider: "supabase",
   supabaseUrl: "",
@@ -11,6 +12,10 @@ const CENTRAL_DATABASE_CONFIG = {
   snapshotId: "production",
   ...(window.WERKBON_DATABASE_CONFIG || {}),
 };
+
+function isDevelopmentMode() {
+  return DEVELOPMENT_MODE === true;
+}
 
 const ORDER_STATUSES = ["Niet besteld", "Besteld", "Ontvangen", "Aangevuld"];
 const DEFAULT_COMPANY_ID = "company-alff-installaties";
@@ -11150,6 +11155,7 @@ function renderNotificationSettings() {
 }
 
 function canCreateCustomerFromCall(user = currentUser()) {
+  if (isDevelopmentMode()) return Boolean(user);
   return Boolean(user && user.role === ROLES.MECHANIC && user.can_create_customer_from_call);
 }
 
@@ -14502,6 +14508,7 @@ const EMAIL_PERMISSION_FIELDS = [
 ];
 
 function hasMechanicPermission(field, user = currentUser()) {
+  if (isDevelopmentMode()) return true;
   if (!user) return false;
   if (userRole(user) !== ROLES.MECHANIC) return true;
   if (field === "can_close_workorders") return user[field] !== false;
@@ -14509,6 +14516,7 @@ function hasMechanicPermission(field, user = currentUser()) {
 }
 
 function hasEmailPermission(field, user = currentUser()) {
+  if (isDevelopmentMode()) return true;
   if (!user) return false;
   if (isPlatformSuperAdmin() || isCompanyAdmin()) return true;
   return Boolean(user[field]);
@@ -14609,6 +14617,7 @@ function updateUser(userId, field, value) {
 }
 
 function canCreatePlanningSelection() {
+  if (isDevelopmentMode()) return true;
   if (isTenantAdmin() || isPlatformSuperAdmin()) return true;
   return isMechanic() && hasMechanicPermission("can_create_own_appointments");
 }
@@ -15734,6 +15743,7 @@ function renderOffice(section = "") {
 }
 
 function canCreatePlanningSelection() {
+  if (isDevelopmentMode()) return true;
   if (isTenantAdmin() || isPlatformSuperAdmin()) return true;
   return isMechanic() && hasMechanicPermission("can_create_own_appointments");
 }
@@ -17781,6 +17791,7 @@ function companyModuleConfig(companyOrId, moduleKey) {
 }
 
 function isCompanyModuleActive(moduleKey, companyId = currentCompanyId()) {
+  if (isDevelopmentMode()) return true;
   const key = normalizeModuleKey(moduleKey);
   if (!key) return true;
   if (isPlatformSuperAdmin() && !isSupportMode()) return true;
@@ -17791,6 +17802,7 @@ function isCompanyModuleActive(moduleKey, companyId = currentCompanyId()) {
 }
 
 function moduleDependenciesMissing(companyId, moduleKey) {
+  if (isDevelopmentMode()) return [];
   const module = moduleCatalog().find((item) => item.key === normalizeModuleKey(moduleKey));
   if (!module) return [];
   const company = byId(state.companies || [], companyId);
@@ -18745,6 +18757,7 @@ function userHasExplicitPermission(user, field) {
 }
 
 function dashboardButtonEnabled(user, key) {
+  if (isDevelopmentMode()) return true;
   if (!user || userRole(user) !== ROLES.MECHANIC) return true;
   const field = dashboardPermissionFieldForKey(key);
   if (!field) return true;
@@ -18754,6 +18767,7 @@ function dashboardButtonEnabled(user, key) {
 }
 
 function permissionValue(user, field) {
+  if (isDevelopmentMode()) return true;
   if (isDashboardPermissionField(field)) return user?.[field] !== false;
   if (String(field || "").includes("_workorders") && userRole(user) === ROLES.COMPANY_ADMIN) return user?.[field] !== false;
   const alias = USER_PERMISSION_ALIASES[field];
@@ -18775,6 +18789,7 @@ function syncUserPermissionAliases(user) {
 }
 
 function hasWorkorderPermission(field, user = currentUser()) {
+  if (isDevelopmentMode()) return true;
   if (!user) return false;
   if (isPlatformSuperAdmin() && !isSupportMode()) return true;
   if (userRole(user) === ROLES.COMPANY_ADMIN) return permissionValue(user, field);
@@ -19491,6 +19506,7 @@ function whatsappCompanyId() {
 }
 
 function canUseWhatsApp() {
+  if (isDevelopmentMode()) return true;
   if (!isCompanyModuleActive("whatsapp")) return false;
   if (isCompanyAdmin()) return true;
   if (isMechanic()) return hasMechanicPermission("can_use_whatsapp");
@@ -19498,6 +19514,7 @@ function canUseWhatsApp() {
 }
 
 function canReplyWhatsApp() {
+  if (isDevelopmentMode()) return true;
   if (!canUseWhatsApp()) return false;
   if (isCompanyAdmin()) return true;
   if (isMechanic()) return hasMechanicPermission("can_reply_whatsapp");
@@ -22577,11 +22594,14 @@ window.addEventListener("storage", (event) => {
 });
 
 function renderDatabaseSyncBanner() {
-  if (centralDatabaseEnabled() && !state.databaseSyncError && !state.databaseMigrationStatus) return "";
+  const developmentBanner = isDevelopmentMode()
+    ? `<section class="info-box database-sync-banner development-mode-banner">⚠ TESTMODUS ACTIEF - Alle rechten tijdelijk toegestaan</section>`
+    : "";
+  if (centralDatabaseEnabled() && !state.databaseSyncError && !state.databaseMigrationStatus) return developmentBanner;
   const message = centralDatabaseEnabled()
     ? state.databaseSyncError || state.databaseMigrationStatus
     : "Centrale database is nog niet geconfigureerd. Productiedata wordt niet meer als hoofdopslag in localStorage opgeslagen. Configureer Supabase/PostgreSQL onder Platform Admin -> Systeeminstellingen -> Opslag.";
-  return `<section class="info-box database-sync-banner">${escapeHtml(message || "")}</section>`;
+  return `${developmentBanner}<section class="info-box database-sync-banner">${escapeHtml(message || "")}</section>`;
 }
 
 async function bootstrapApp() {

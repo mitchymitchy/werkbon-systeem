@@ -33,4 +33,5 @@
 - Company Admin en Platform Admin kunnen nu per monteur de zichtbare dashboardknoppen beheren; deze dashboardrechten worden via de bestaande Supabase `permissions` flow opgeslagen.
 - Company Admin heeft onder Instellingen -> Monteur startscherm nu een beheerpagina voor standaard starttegels en tegelrechten per monteur, opgeslagen via Supabase.
 - Klant aanmaken controleert nu op dubbele klanten via naam, e-mail, telefoon en postcode/huisnummer, met opties voor bestaande klant gebruiken, toch nieuw aanmaken of samenvoegen inclusief auditlog.
+- Tijdelijke `DEVELOPMENT_MODE` toegevoegd: wanneer actief zijn alle permissies en modules vrijgegeven en toont de app bovenaan een testmoduswaarschuwing.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.
