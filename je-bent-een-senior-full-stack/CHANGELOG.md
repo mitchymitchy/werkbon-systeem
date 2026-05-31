@@ -31,4 +31,6 @@
 - Werkbon aanmaken vereenvoudigd naar een korte `+ Nieuwe werkbon` flow voor Monteur en Company Admin met klantkeuze, type werkbon, planning, optionele toestelgegevens, concept/open acties en Supabase-opslag.
 - Monteur Start toont nu een aparte tegel `Werkbon aanmaken`, los van `Werkbonnen`, gestuurd door het Supabase-permission veld `workorders_create`.
 - Company Admin en Platform Admin kunnen nu per monteur de zichtbare dashboardknoppen beheren; deze dashboardrechten worden via de bestaande Supabase `permissions` flow opgeslagen.
+- Company Admin heeft onder Instellingen -> Monteur startscherm nu een beheerpagina voor standaard starttegels en tegelrechten per monteur, opgeslagen via Supabase.
+- Klant aanmaken controleert nu op dubbele klanten via naam, e-mail, telefoon en postcode/huisnummer, met opties voor bestaande klant gebruiken, toch nieuw aanmaken of samenvoegen inclusief auditlog.
 - Kritieke resetfuncties verwijderd uit bedrijfsomgevingen en beperkt tot Platform Admin met extra waarschuwingen en auditlog.

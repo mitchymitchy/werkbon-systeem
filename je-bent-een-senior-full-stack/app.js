@@ -321,6 +321,8 @@ const seedUsers = [
     can_create_own_appointments: false,
     can_create_customers: false,
     can_edit_customers: false,
+    workorders_create: true,
+    can_create_workorders: true,
     can_close_workorders: true,
     can_make_quotes: false,
     can_register_payments: false,
@@ -4203,6 +4205,23 @@ async function saveUserRow() {
     setServerSaveSuccess("Wijzigingen succesvol opgeslagen");
   } catch (error) {
     console.error("Rechten opslaan mislukt", error);
+    state.databaseSyncError = error.message || "Dashboardrechten konden niet worden opgeslagen.";
+    setServerSaveError("Dashboardrechten konden niet worden opgeslagen.");
+  }
+}
+
+async function saveMechanicStartSettings() {
+  setServerSavePending("mechanic-start");
+  try {
+    await persistStateToSupabaseEntities(state);
+    await refreshStateFromSupabaseEntities();
+    state.databaseSyncError = "";
+    state.databaseMigrationStatus = "Monteur startscherm opgeslagen op Supabase en opnieuw geladen.";
+    saveLocalSessionOnly();
+    saveLocalUiPreferences();
+    setServerSaveSuccess("Wijzigingen succesvol opgeslagen");
+  } catch (error) {
+    console.error("Monteur startscherm opslaan mislukt", error);
     state.databaseSyncError = error.message || "Dashboardrechten konden niet worden opgeslagen.";
     setServerSaveError("Dashboardrechten konden niet worden opgeslagen.");
   }
@@ -8175,6 +8194,68 @@ function updateCompanySetting(field, value) {
   render();
 }
 
+function updateMechanicStartDefault(field, value) {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return;
+  const company = currentCompany();
+  if (!company) return;
+  const allowed = mechanicStartTileDefinitions().some(([permissionField]) => permissionField === field);
+  if (!allowed) return;
+  const defaults = mechanicStartTileDefaults(company);
+  defaults[field] = Boolean(value);
+  company.updated_at = new Date().toISOString();
+  render();
+}
+
+function applyMechanicStartDefaultsToAll() {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return;
+  const company = currentCompany();
+  if (!company) return;
+  const defaults = mechanicStartTileDefaults(company);
+  companyScoped(state.users || [])
+    .filter((user) => userRole(user) === ROLES.MECHANIC && !user.deleted)
+    .forEach((user) => {
+      mechanicStartTileDefinitions().forEach(([field]) => setUserPermissionValue(user, field, defaults[field] !== false));
+      user.updated_at = new Date().toISOString();
+    });
+  render();
+}
+
+function renderMechanicStartScreenSettings() {
+  if (!isCompanyAdmin() && !isPlatformSuperAdmin()) return "";
+  const company = currentCompany();
+  if (!company) return "";
+  const tileDefinitions = mechanicStartTileDefinitions();
+  const defaults = mechanicStartTileDefaults(company);
+  const mechanics = companyScoped(state.users || []).filter((user) => userRole(user) === ROLES.MECHANIC && !user.deleted);
+  const renderTileSelect = (field, value, onchange) => `<select onchange="${onchange}"><option value="false" ${!value ? "selected" : ""}>Uit</option><option value="true" ${value ? "selected" : ""}>Aan</option></select>`;
+  return `<section class="panel" style="margin-top:14px">
+    <div class="article-head">
+      <div><h2>Monteur startscherm</h2><p>Beheer welke tegels zichtbaar zijn voor monteurs. Desktop en mobiel gebruiken dezelfde Supabase-permissions.</p></div>
+      <span class="badge">permissions / company_settings</span>
+    </div>
+    <section class="user-permission-section">
+      <h4>Standaard voor alle monteurs</h4>
+      <div class="user-permission-grid">
+        ${tileDefinitions.map(([field, , label]) => `<label class="permission-row"><span>${escapeHtml(label)}</span>${renderTileSelect(field, defaults[field] !== false, `updateMechanicStartDefault('${field}', this.value === 'true')`)}</label>`).join("")}
+      </div>
+      <div class="button-row">
+        <button class="btn secondary" type="button" onclick="applyMechanicStartDefaultsToAll()">Standaard toepassen op alle monteurs</button>
+      </div>
+    </section>
+    <section class="user-permission-section">
+      <h4>Per monteur</h4>
+      ${mechanics.length ? mechanics.map((user) => `<details class="user-card compact-user-card">
+        <summary><strong>${escapeHtml(user.name || "-")}</strong><span>${escapeHtml(user.email || "")}</span></summary>
+        <div class="user-permission-grid" style="margin-top:12px">
+          ${tileDefinitions.map(([field, , label]) => `<label class="permission-row"><span>${escapeHtml(label)}</span>${renderTileSelect(field, permissionValue(user, field), `updateUser('${user.id}', '${field}', this.value === 'true')`)}</label>`).join("")}
+        </div>
+        ${dashboardPermissionFieldForKey("maintenance-workorder") ? `<p class="muted">Let op: de tegel Werkbon aanmaken vereist ook het werkbonrecht Werkbonnen aanmaken.</p>` : ""}
+      </details>`).join("") : `<p class="muted">Geen monteurs gevonden binnen dit bedrijf.</p>`}
+    </section>
+    <div class="button-row">${renderServerSaveButton("mechanic-start", "saveMechanicStartSettings()", "Volgorde en tegels opslaan", "success")}</div>
+  </section>`;
+}
+
 function companyScoped(collection = []) {
   return collection.filter((item) => isSameCompany(item));
 }
@@ -9018,49 +9099,303 @@ function renderCustomerModal(customerId) {
   </form></section>`;
 }
 
+function normalizeCustomerLookupValue(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizePhoneValue(value) {
+  return String(value || "").replace(/[^0-9+]/g, "");
+}
+
+function customerNameParts(value) {
+  const parts = normalizeCustomerLookupValue(value).split(" ").filter(Boolean);
+  return {
+    first: parts[0] || "",
+    last: parts.length > 1 ? parts[parts.length - 1] : "",
+    full: parts.join(" "),
+  };
+}
+
+function customerDraftFromForm(form, now = new Date().toISOString()) {
+  const postcode = String(form.get("postal_code") || "").trim();
+  const houseNumber = String(form.get("house_number") || "").trim();
+  const geo = form.get("lat") && form.get("lng") ? { lat: Number(form.get("lat")), lng: Number(form.get("lng")), precision: String(form.get("geocode_provider") || "manual") } : approximateGeoFromAddress(postcode, houseNumber);
+  return {
+    data: {
+      customer_name: String(form.get("customer_name") || "").trim(),
+      contact_person: String(form.get("contact_person") || "").trim(),
+      house_number: houseNumber,
+      address: String(form.get("address") || "").trim(),
+      postal_code: postcode,
+      city: String(form.get("city") || "").trim(),
+      phone: String(form.get("phone") || "").trim(),
+      email: String(form.get("email") || "").trim(),
+      notes: String(form.get("notes") || "").trim(),
+      lat: geo.lat,
+      lng: geo.lng,
+      latitude: geo.lat,
+      longitude: geo.lng,
+      geocode_provider: geo.precision,
+      map_location_saved: Boolean(geo.lat && geo.lng),
+      maintenance_interval_months: Math.max(1, Number(form.get("maintenance_interval_months") || 12)),
+      next_maintenance_date: String(form.get("next_maintenance_date") || "").trim(),
+      last_maintenance_date: String(form.get("last_service_date") || "").trim(),
+      updated_at: now,
+    },
+    appliance: {
+      brand: String(form.get("appliance_brand") || "").trim(),
+      model: String(form.get("appliance_model") || "").trim(),
+      serial_number: String(form.get("serial_number") || "").trim(),
+      build_year: String(form.get("build_year") || "").trim(),
+      category: String(form.get("appliance_category") || "").trim(),
+      last_service_date: String(form.get("last_service_date") || "").trim(),
+      service_date: String(form.get("last_service_date") || "").trim(),
+      maintenance_interval_months: Math.max(1, Number(form.get("maintenance_interval_months") || 12)),
+      next_service_date: String(form.get("next_maintenance_date") || "").trim(),
+      typeplate_photo: ui.customerAppliancePhotoData || null,
+    },
+  };
+}
+
+function customerDuplicateScore(customer, draft) {
+  if (!customer || !isSameCompany(customer)) return { exact: false, possible: false, reasons: [] };
+  const existingName = customerNameParts(customer.customer_name || customer.name || "");
+  const draftName = customerNameParts(draft.data.customer_name || "");
+  const sameName = existingName.full && draftName.full && existingName.full === draftName.full;
+  const sameFirstLast = existingName.first && existingName.last && existingName.first === draftName.first && existingName.last === draftName.last;
+  const sameEmail = normalizeCustomerLookupValue(customer.email) && normalizeCustomerLookupValue(customer.email) === normalizeCustomerLookupValue(draft.data.email);
+  const samePhone = normalizePhoneValue(customer.phone) && normalizePhoneValue(customer.phone) === normalizePhoneValue(draft.data.phone);
+  const sameAddress = normalizeCustomerLookupValue(customer.postal_code) && normalizeCustomerLookupValue(customer.house_number) &&
+    normalizeCustomerLookupValue(customer.postal_code) === normalizeCustomerLookupValue(draft.data.postal_code) &&
+    normalizeCustomerLookupValue(customer.house_number) === normalizeCustomerLookupValue(draft.data.house_number);
+  const reasons = [];
+  if (sameName) reasons.push("zelfde naam");
+  if (sameEmail) reasons.push("zelfde e-mail");
+  if (samePhone) reasons.push("zelfde telefoonnummer");
+  if (sameAddress) reasons.push("zelfde postcode en huisnummer");
+  return {
+    exact: Boolean((sameName || sameFirstLast) && sameEmail),
+    possible: Boolean(sameEmail || samePhone || sameAddress || ((sameName || sameFirstLast) && (samePhone || sameAddress))),
+    reasons,
+  };
+}
+
+function findCustomerDuplicateCandidates(draft, ignoreId = "") {
+  return companyScoped(state.customers || [])
+    .filter((customer) => customer.id !== ignoreId && !customer.deleted)
+    .map((customer) => ({ customer, score: customerDuplicateScore(customer, draft) }))
+    .filter((row) => row.score.exact || row.score.possible);
+}
+
+function logCustomerMergeAudit(targetCustomer, sourceLabel, action = "customer_duplicate_merged") {
+  state.auditLogs = state.auditLogs || [];
+  state.auditLogs.push({
+    id: uid("audit"),
+    company_id: strictRecordCompanyId(targetCustomer),
+    companyId: strictRecordCompanyId(targetCustomer),
+    user_id: currentUser()?.id || "",
+    userId: currentUser()?.id || "",
+    role: currentUser()?.role || "",
+    action,
+    entity_type: "customer",
+    entityType: "customer",
+    entity_id: targetCustomer.id,
+    entityId: targetCustomer.id,
+    details: sourceLabel,
+    created_at: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function mergeCustomerDraftIntoCustomer(customer, draft, action = "customer_duplicate_merged") {
+  const now = new Date().toISOString();
+  const incoming = draft.data || {};
+  ["customer_name", "contact_person", "phone", "email", "address", "postal_code", "house_number", "city", "lat", "lng", "latitude", "longitude", "geocode_provider", "next_maintenance_date", "last_maintenance_date"].forEach((field) => {
+    if ((customer[field] === undefined || customer[field] === null || customer[field] === "") && incoming[field]) customer[field] = incoming[field];
+  });
+  if (incoming.notes && !String(customer.notes || "").includes(incoming.notes)) {
+    customer.notes = customer.notes ? `${customer.notes}\n\nSamengevoegd: ${incoming.notes}` : incoming.notes;
+  }
+  customer.updated_at = now;
+  customer.updatedAt = now;
+  saveCustomerApplianceFromDraft(customer, draft, now);
+  logCustomerMergeAudit(customer, `Samengevoegd met nieuwe klantinvoer door ${currentUser()?.name || "onbekend"}`, action);
+  return customer;
+}
+
+function createCustomerFromDraft(draft) {
+  const now = new Date().toISOString();
+  const customer = {
+    id: uid("customer"),
+    company_id: currentCompanyId(),
+    companyId: currentCompanyId(),
+    ...draft.data,
+    source: "admin",
+    created_by: currentUser()?.id || "",
+    active: true,
+    created_at: now,
+    createdAt: now,
+  };
+  state.customers.push(customer);
+  saveCustomerApplianceFromDraft(customer, draft, now);
+  return customer;
+}
+
+function finishCustomerDuplicateFlow(customer) {
+  ui.pendingCustomerDuplicate = null;
+  ui.editingCustomerId = null;
+  ui.customerAppliancePhotoData = null;
+  ui.customerDetailId = customer?.id || ui.customerDetailId || null;
+  saveState();
+  render();
+}
+
+function useExistingDuplicateCustomer(customerId) {
+  const pending = ui.pendingCustomerDuplicate;
+  const customer = byId(state.customers || [], customerId);
+  if (!pending || !customer || !isSameCompany(customer)) return;
+  mergeCustomerDraftIntoCustomer(customer, pending.draft, "customer_duplicate_existing_used");
+  finishCustomerDuplicateFlow(customer);
+}
+
+function mergeDuplicateCustomer(customerId) {
+  const pending = ui.pendingCustomerDuplicate;
+  const customer = byId(state.customers || [], customerId);
+  if (!pending || !customer || !isSameCompany(customer)) return;
+  mergeCustomerDraftIntoCustomer(customer, pending.draft, "customer_duplicate_merged");
+  finishCustomerDuplicateFlow(customer);
+}
+
+function forceCreateDuplicateCustomer() {
+  const pending = ui.pendingCustomerDuplicate;
+  if (!pending) return;
+  const customer = createCustomerFromDraft(pending.draft);
+  logCustomerMergeAudit(customer, "Nieuwe klant aangemaakt ondanks mogelijke duplicate", "customer_duplicate_forced_create");
+  finishCustomerDuplicateFlow(customer);
+}
+
+function cancelCustomerDuplicateModal() {
+  ui.pendingCustomerDuplicate = null;
+  render();
+}
+
+function renderCustomerDuplicateModal() {
+  const pending = ui.pendingCustomerDuplicate;
+  if (!pending) return "";
+  const matches = (pending.matches || []).map((id) => byId(state.customers || [], id)).filter(Boolean);
+  return `<section class="modal-backdrop"><div class="panel confirm-modal customer-duplicate-modal">
+    <h2>Mogelijke dubbele klant gevonden</h2>
+    <p class="muted">Controleer de bestaande klant voordat u een nieuwe klant aanmaakt. Werkbonnen, offertes, facturen, toestellen en notities blijven behouden.</p>
+    ${matches.map((customer) => {
+      const score = customerDuplicateScore(customer, pending.draft);
+      return `<article class="customer-card">
+        <div class="customer-card-main"><div><h3>${escapeHtml(customer.customer_name || "-")}</h3><p>${escapeHtml(customer.address || "-")} ${escapeHtml(customer.postal_code || "")} ${escapeHtml(customer.city || "")}</p></div><span class="badge">${escapeHtml(score.reasons.join(", ") || "mogelijke match")}</span></div>
+        <div class="customer-card-grid">
+          <div><span>Telefoon</span><strong>${escapeHtml(customer.phone || "-")}</strong></div>
+          <div><span>E-mail</span><strong>${escapeHtml(customer.email || "-")}</strong></div>
+          <div><span>Werkbonnen</span><strong>${customerWorkorders(customer).length}</strong></div>
+          <div><span>Toestellen</span><strong>${customerAppliances(customer).length}</strong></div>
+        </div>
+        <div class="button-row">
+          <button class="btn secondary" type="button" onclick="useExistingDuplicateCustomer('${customer.id}')">Bestaande klant gebruiken</button>
+          <button class="btn success" type="button" onclick="mergeDuplicateCustomer('${customer.id}')">Samenvoegen</button>
+        </div>
+      </article>`;
+    }).join("")}
+    <div class="button-row">
+      <button class="btn secondary" type="button" onclick="cancelCustomerDuplicateModal()">Annuleren</button>
+      <button class="btn warn" type="button" onclick="forceCreateDuplicateCustomer()">Toch nieuwe klant aanmaken</button>
+    </div>
+  </div></section>`;
+}
+
 function saveCustomer(event, customerId) {
   event.preventDefault();
   const form = new FormData(event.target);
   const now = new Date().toISOString();
-  const postcode = String(form.get("postal_code") || "").trim();
-  const houseNumber = String(form.get("house_number") || "").trim();
-  const geo = form.get("lat") && form.get("lng") ? { lat: Number(form.get("lat")), lng: Number(form.get("lng")), precision: String(form.get("geocode_provider") || "manual") } : approximateGeoFromAddress(postcode, houseNumber);
-  const data = {
-    customer_name: String(form.get("customer_name") || "").trim(),
-    contact_person: String(form.get("contact_person") || "").trim(),
-    house_number: houseNumber,
-    address: String(form.get("address") || "").trim(),
-    postal_code: postcode,
-    city: String(form.get("city") || "").trim(),
-    phone: String(form.get("phone") || "").trim(),
-    email: String(form.get("email") || "").trim(),
-    notes: String(form.get("notes") || "").trim(),
-    lat: geo.lat,
-    lng: geo.lng,
-    latitude: geo.lat,
-    longitude: geo.lng,
-    geocode_provider: geo.precision,
-    map_location_saved: Boolean(geo.lat && geo.lng),
-    maintenance_interval_months: Math.max(1, Number(form.get("maintenance_interval_months") || 12)),
-    next_maintenance_date: String(form.get("next_maintenance_date") || "").trim(),
-    last_maintenance_date: String(form.get("last_service_date") || "").trim(),
-    updated_at: now,
-  };
+  const draft = customerDraftFromForm(form, now);
+  const data = draft.data;
   if (!data.customer_name || !data.postal_code || !data.house_number) return alert("Klantnaam, postcode en huisnummer zijn verplicht.");
   let customer;
   if (customerId === "new") {
-    customer = { id: uid("customer"), company_id: currentCompanyId(), companyId: currentCompanyId(), ...data, source: "admin", created_by: currentUser()?.id || "", active: true, created_at: now };
-    state.customers.push(customer);
+    const duplicates = findCustomerDuplicateCandidates(draft);
+    const exact = duplicates.find((row) => row.score.exact);
+    if (exact) {
+      customer = mergeCustomerDraftIntoCustomer(exact.customer, draft, "customer_duplicate_exact_auto_merged");
+      finishCustomerDuplicateFlow(customer);
+      return;
+    }
+    if (duplicates.length) {
+      ui.pendingCustomerDuplicate = { draft, matches: duplicates.map((row) => row.customer.id) };
+      render();
+      return;
+    }
+    customer = createCustomerFromDraft(draft);
   } else {
     customer = byId(state.customers || [], customerId);
     if (!customer || !isSameCompany(customer)) return;
     Object.assign(customer, data);
+    saveCustomerApplianceFromDraft(customer, draft, now);
   }
-  saveCustomerApplianceFromForm(customer, form, now);
   ui.editingCustomerId = null;
   ui.customerAppliancePhotoData = null;
   saveState();
   render();
+}
+
+function saveCustomerApplianceFromDraft(customer, draft, now = new Date().toISOString()) {
+  const applianceData = {
+    ...(draft.appliance || {}),
+    maintenance_interval_months: Math.max(1, Number(draft.appliance?.maintenance_interval_months || customer.maintenance_interval_months || 12)),
+  };
+  const hasApplianceData = Object.entries(applianceData).some(([key, value]) => key !== "maintenance_interval_months" && Boolean(value));
+  if (!hasApplianceData) return null;
+  state.appliances = state.appliances || [];
+  const companyId = strictRecordCompanyId(customer);
+  const existing = state.appliances.find((row) =>
+    strictRecordCompanyId(row) === companyId &&
+    row.customer_id === customer.id &&
+    ((applianceData.serial_number && row.serial_number === applianceData.serial_number) || (!applianceData.serial_number && row.brand === applianceData.brand && row.model === applianceData.model))
+  );
+  const appliance = existing || {
+    id: uid("appliance"),
+    company_id: companyId,
+    companyId: companyId,
+    customer_id: customer.id,
+    active: true,
+    service_history: [],
+    created_at: now,
+  };
+  Object.assign(appliance, applianceData, {
+    customer_name: customer.customer_name,
+    address: customer.address,
+    house_number: customer.house_number,
+    postal_code: customer.postal_code,
+    city: customer.city,
+    lat: customer.lat,
+    lng: customer.lng,
+    updated_at: now,
+  });
+  if (!existing) state.appliances.push(appliance);
+  customer.appliances = customer.appliances || [];
+  const summary = {
+    id: appliance.id,
+    brand: appliance.brand,
+    model: appliance.model,
+    serial_number: appliance.serial_number,
+    build_year: appliance.build_year,
+    category: appliance.category,
+    address: appliance.address,
+    postal_code: appliance.postal_code,
+    city: appliance.city,
+    last_service_date: appliance.last_service_date,
+    next_service_date: appliance.next_service_date,
+    typeplate_photo: appliance.typeplate_photo,
+  };
+  const idx = customer.appliances.findIndex((item) => item.id === appliance.id);
+  if (idx >= 0) customer.appliances[idx] = summary;
+  else customer.appliances.push(summary);
+  return appliance;
 }
 
 function saveCustomerApplianceFromForm(customer, form, now = new Date().toISOString()) {
@@ -15383,7 +15718,7 @@ function renderDashboardTab() {
   if (ui.dashboardTab === "Voorraad") return renderOfficeInventory();
   if (ui.dashboardTab === "Margebeheer") return renderOfficeMarginManagement();
   if (ui.dashboardTab === "Rapportages") return renderOfficeReports();
-  if (ui.dashboardTab === "Instellingen") return `${renderCompanySettings()}${renderMenuLayoutSettings()}${renderChecklistSettings()}`;
+  if (ui.dashboardTab === "Instellingen") return `${renderCompanySettings()}${renderMechanicStartScreenSettings()}${renderMenuLayoutSettings()}${renderChecklistSettings()}`;
   return renderOfficeDashboard();
 }
 
@@ -18370,10 +18705,52 @@ function dashboardPermissionFieldForKey(key) {
   return MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.find(([, itemKey]) => itemKey === key)?.[0] || "";
 }
 
+function mechanicStartTileDefinitions() {
+  const requestedKeys = new Set([
+    "planning",
+    "workorders",
+    "maintenance-workorder",
+    "active-projects",
+    "completed-projects",
+    "appliances",
+    "customers",
+    "van-stock",
+    "notifications",
+    "call-customer",
+    "whatsapp",
+  ]);
+  return MONTEUR_DASHBOARD_BUTTON_PERMISSIONS.filter(([, key]) => requestedKeys.has(key));
+}
+
+function companyForUser(user = currentUser()) {
+  const companyId = user?.company_id || user?.companyId || currentCompanyId();
+  return byId(state.companies || [], companyId) || currentCompany();
+}
+
+function mechanicStartTileDefaults(company = currentCompany()) {
+  if (!company) return {};
+  company.settings = company.settings || {};
+  company.settings.mechanic_start_tiles_default = company.settings.mechanic_start_tiles_default || {};
+  const defaults = company.settings.mechanic_start_tiles_default;
+  mechanicStartTileDefinitions().forEach(([field]) => {
+    if (defaults[field] === undefined) defaults[field] = true;
+  });
+  return defaults;
+}
+
+function userHasExplicitPermission(user, field) {
+  if (!user) return false;
+  const alias = USER_PERMISSION_ALIASES[field];
+  return Object.prototype.hasOwnProperty.call(user, field) || (alias && Object.prototype.hasOwnProperty.call(user, alias));
+}
+
 function dashboardButtonEnabled(user, key) {
   if (!user || userRole(user) !== ROLES.MECHANIC) return true;
   const field = dashboardPermissionFieldForKey(key);
-  return field ? user[field] !== false : true;
+  if (!field) return true;
+  if (userHasExplicitPermission(user, field)) return permissionValue(user, field);
+  const defaults = mechanicStartTileDefaults(companyForUser(user));
+  return defaults[field] !== false;
 }
 
 function permissionValue(user, field) {
@@ -20358,6 +20735,7 @@ function renderCustomers() {
     </section>
     ${ui.editingCustomerId ? renderCustomerModal(ui.editingCustomerId) : ""}
     ${renderCustomerPopup()}
+    ${renderCustomerDuplicateModal()}
   </section>`;
 }
 
